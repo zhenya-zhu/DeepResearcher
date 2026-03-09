@@ -1,0 +1,119 @@
+{
+  "default": {
+    "context_window_tokens": 128000
+  },
+  "rules": [
+    {
+      "pattern": "anthropic--claude-4.",
+      "match": "prefix",
+      "family": "claude-4.x",
+      "context_window_tokens": 200000,
+      "source_url": "https://docs.anthropic.com/en/docs/models-overview",
+      "notes": "Local Anthropic-compatible gateway alias mapped to Claude 4.x standard context window."
+    },
+    {
+      "pattern": "claude-sonnet-4",
+      "match": "prefix",
+      "family": "claude-4.x",
+      "context_window_tokens": 200000,
+      "source_url": "https://docs.anthropic.com/en/docs/models-overview",
+      "notes": "Standard Claude 4.x context window."
+    },
+    {
+      "pattern": "claude-opus-4",
+      "match": "prefix",
+      "family": "claude-4.x",
+      "context_window_tokens": 200000,
+      "source_url": "https://docs.anthropic.com/en/docs/models-overview",
+      "notes": "Standard Claude 4.x context window."
+    },
+    {
+      "pattern": "gpt-5-chat",
+      "match": "prefix",
+      "family": "gpt-5-chat",
+      "context_window_tokens": 128000,
+      "source_url": "https://platform.openai.com/docs/models/gpt-5",
+      "notes": "OpenAI chat-oriented GPT-5 variants use the smaller context profile."
+    },
+    {
+      "pattern": "gpt-5-codex",
+      "match": "prefix",
+      "family": "gpt-5-codex",
+      "context_window_tokens": 400000,
+      "source_url": "https://platform.openai.com/docs/models/gpt-5-codex",
+      "notes": "OpenAI GPT-5 Codex profile."
+    },
+    {
+      "pattern": "gpt-5",
+      "match": "prefix",
+      "family": "gpt-5",
+      "context_window_tokens": 400000,
+      "source_url": "https://platform.openai.com/docs/models/gpt-5",
+      "notes": "OpenAI GPT-5 and GPT-5 mini profile."
+    },
+    {
+      "pattern": "gpt-4.1",
+      "match": "prefix",
+      "family": "gpt-4.1",
+      "context_window_tokens": 1047576,
+      "source_url": "https://platform.openai.com/docs/models/gpt-4.1",
+      "notes": "OpenAI GPT-4.1 family long-context profile."
+    },
+    {
+      "pattern": "codex-mini-latest",
+      "match": "exact",
+      "family": "codex-mini",
+      "context_window_tokens": 200000,
+      "source_url": "https://platform.openai.com/docs/models/codex-mini",
+      "notes": "OpenAI Codex Mini profile."
+    },
+    {
+      "pattern": "gemini-2.5",
+      "match": "prefix",
+      "family": "gemini-2.5",
+      "context_window_tokens": 1048576,
+      "source_url": "https://ai.google.dev/gemini-api/docs/models/gemini-v2",
+      "notes": "Google Gemini 2.5 profile."
+    },
+    {
+      "pattern": "gemini-2.0-flash",
+      "match": "prefix",
+      "family": "gemini-2.0-flash",
+      "context_window_tokens": 1048576,
+      "source_url": "https://ai.google.dev/gemini-api/docs/models/gemini-v2",
+      "notes": "Google Gemini Flash long-context profile."
+    },
+    {
+      "pattern": "sonar-pro",
+      "match": "prefix",
+      "family": "sonar-pro",
+      "context_window_tokens": 200000,
+      "source_url": "https://docs.perplexity.ai/docs/getting-started/models/models/sonar-pro",
+      "notes": "Perplexity Sonar Pro profile."
+    },
+    {
+      "pattern": "sonar-reasoning-pro",
+      "match": "prefix",
+      "family": "sonar-reasoning-pro",
+      "context_window_tokens": 128000,
+      "source_url": "https://docs.perplexity.ai/docs/getting-started/models/models/sonar-reasoning-pro",
+      "notes": "Perplexity Sonar Reasoning Pro profile."
+    },
+    {
+      "pattern": "sonar-deep-research",
+      "match": "prefix",
+      "family": "sonar-deep-research",
+      "context_window_tokens": 128000,
+      "source_url": "https://docs.perplexity.ai/docs/getting-started/models/models/sonar-deep-research",
+      "notes": "Perplexity Sonar Deep Research profile."
+    },
+    {
+      "pattern": "sonar",
+      "match": "exact",
+      "family": "sonar",
+      "context_window_tokens": 128000,
+      "source_url": "https://docs.perplexity.ai/docs/getting-started/models/models/sonar",
+      "notes": "Perplexity Sonar profile."
+    }
+  ]
+}
