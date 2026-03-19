@@ -356,7 +356,7 @@ def build_section_report_messages(state: ResearchState, section: SectionState) -
                 "Start with a ## heading, then use ### subheadings to organize the section into 2-4 logical subsections.\n"
                 "WRITING QUALITY REQUIREMENTS:\n"
                 "- Write 8-15 substantial paragraphs total across all subsections.\n"
-                "- Each paragraph MUST be 4-8 sentences with clear topic sentences and deep analytical content. Short 1-2 sentence paragraphs are NOT acceptable.\n"
+                "- Each paragraph MUST be 5-10 sentences with clear topic sentences and deep analytical content. Short 1-3 sentence paragraphs are NOT acceptable — every paragraph should develop a complete analytical argument.\n"
                 "- Go beyond surface description: explain mechanisms, causes, implications, and trade-offs.\n"
                 "- Use observation → inference → implication chains to build analytical arguments.\n"
                 "- You MUST include at least one comparison table (markdown table with | header | format) per section when comparing systems, approaches, metrics, or features. Tables should have 3+ columns and 3+ rows.\n"
