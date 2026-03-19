@@ -87,11 +87,11 @@ class AppConfig:
     timeout_seconds: int = 120
     rpm_limit: int = 16
     max_rounds: int = 2
-    max_sections: int = 5
-    max_queries_per_section: int = 2
-    max_results_per_query: int = 4
-    max_sources_per_section: int = 3
-    max_chars_per_source: int = 2200
+    max_sections: int = 7
+    max_queries_per_section: int = 3
+    max_results_per_query: int = 5
+    max_sources_per_section: int = 5
+    max_chars_per_source: int = 4000
     search_region: str = "us-en"
     run_root: Path = field(default_factory=lambda: Path("runs"))
     model_capabilities_file: Optional[Path] = None
@@ -112,12 +112,12 @@ class AppConfig:
     researcher: ModelSelection = field(default_factory=lambda: ModelSelection(
         candidates=["anthropic--claude-4.6-sonnet", "gpt-5", "sonar-pro"],
         temperature=0.2,
-        max_output_tokens=3600,
+        max_output_tokens=5000,
     ))
     writer: ModelSelection = field(default_factory=lambda: ModelSelection(
         candidates=["anthropic--claude-4.6-sonnet", "gpt-5", "anthropic--claude-4.6-opus"],
         temperature=0.2,
-        max_output_tokens=8000,
+        max_output_tokens=12000,
     ))
     verifier: ModelSelection = field(default_factory=lambda: ModelSelection(
         candidates=["anthropic--claude-4.6-sonnet", "gpt-5", "sonar-pro"],
@@ -144,11 +144,11 @@ class AppConfig:
             timeout_seconds=_env_int("DEEP_RESEARCHER_TIMEOUT_SECONDS", 120),
             rpm_limit=_env_int("DEEP_RESEARCHER_RPM_LIMIT", 16),
             max_rounds=_env_int("DEEP_RESEARCHER_MAX_ROUNDS", 2),
-            max_sections=_env_int("DEEP_RESEARCHER_MAX_SECTIONS", 5),
-            max_queries_per_section=_env_int("DEEP_RESEARCHER_MAX_QUERIES_PER_SECTION", 2),
-            max_results_per_query=_env_int("DEEP_RESEARCHER_MAX_RESULTS_PER_QUERY", 4),
-            max_sources_per_section=_env_int("DEEP_RESEARCHER_MAX_SOURCES_PER_SECTION", 3),
-            max_chars_per_source=_env_int("DEEP_RESEARCHER_MAX_CHARS_PER_SOURCE", 2200),
+            max_sections=_env_int("DEEP_RESEARCHER_MAX_SECTIONS", 7),
+            max_queries_per_section=_env_int("DEEP_RESEARCHER_MAX_QUERIES_PER_SECTION", 3),
+            max_results_per_query=_env_int("DEEP_RESEARCHER_MAX_RESULTS_PER_QUERY", 5),
+            max_sources_per_section=_env_int("DEEP_RESEARCHER_MAX_SOURCES_PER_SECTION", 5),
+            max_chars_per_source=_env_int("DEEP_RESEARCHER_MAX_CHARS_PER_SOURCE", 4000),
             search_region=os.getenv("DEEP_RESEARCHER_SEARCH_REGION", "us-en"),
             run_root=Path(os.getenv("DEEP_RESEARCHER_RUN_ROOT", "runs")),
             model_capabilities_file=(
@@ -193,7 +193,7 @@ class AppConfig:
             temperature=_env_float("DEEP_RESEARCHER_RESEARCHER_TEMPERATURE", 0.2),
             max_output_tokens=_env_int_alias(
                 ["DEEP_RESEARCHER_RESEARCHER_MAX_OUTPUT_TOKENS", "DEEP_RESEARCHER_RESEARCHER_MAX_TOKENS"],
-                3600,
+                5000,
             ),
         )
         config.writer = ModelSelection(
@@ -204,7 +204,7 @@ class AppConfig:
             temperature=_env_float("DEEP_RESEARCHER_WRITER_TEMPERATURE", 0.2),
             max_output_tokens=_env_int_alias(
                 ["DEEP_RESEARCHER_WRITER_MAX_OUTPUT_TOKENS", "DEEP_RESEARCHER_WRITER_MAX_TOKENS"],
-                8000,
+                12000,
             ),
         )
         config.verifier = ModelSelection(
