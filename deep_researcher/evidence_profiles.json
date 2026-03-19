@@ -1,0 +1,121 @@
+[
+  {
+    "id": "primary_source",
+    "description": "Anchor the section in official or first-party materials when those exist.",
+    "default_priority": "high",
+    "default_source_hints": [
+      "Primary source materials",
+      "Official documentation, reports, repos, papers, or disclosures"
+    ],
+    "default_query_templates": [
+      "{subject} {document_terms}",
+      "{subject} {section_title}"
+    ],
+    "fallback_enabled": true
+  },
+  {
+    "id": "implementation_detail",
+    "description": "Collect mechanism-level implementation evidence such as architecture, workflows, APIs, or code paths.",
+    "default_priority": "high",
+    "default_source_hints": [
+      "Technical design docs",
+      "Official blogs, code repos, and API docs"
+    ],
+    "default_query_templates": [
+      "{subject} {query_hints}",
+      "{subject} {section_title} implementation"
+    ],
+    "fallback_enabled": true
+  },
+  {
+    "id": "structural_breakdown",
+    "description": "Break the subject into modules, components, products, or subsystems.",
+    "default_priority": "medium",
+    "default_source_hints": [
+      "Source material that decomposes the subject into major parts"
+    ],
+    "default_query_templates": [
+      "{subject} {query_hints}",
+      "{subject} {section_title} breakdown"
+    ],
+    "fallback_enabled": true
+  },
+  {
+    "id": "regional_breakdown",
+    "description": "Collect geographic, market, or regional segmentation evidence.",
+    "default_priority": "medium",
+    "default_source_hints": [
+      "Regional or market segmentation data"
+    ],
+    "default_query_templates": [
+      "{subject} {query_hints}",
+      "{subject} {section_title} regional"
+    ],
+    "fallback_enabled": false
+  },
+  {
+    "id": "comparative_benchmark",
+    "description": "Compare the subject against peers, alternatives, or benchmarks.",
+    "default_priority": "medium",
+    "default_source_hints": [
+      "Comparative benchmarks, rankings, peer evidence"
+    ],
+    "default_query_templates": [
+      "{subject} {query_hints}",
+      "{subject} {section_title} comparison"
+    ],
+    "fallback_enabled": false
+  },
+  {
+    "id": "timeline_history",
+    "description": "Build a dated chronology of milestones, evolution, or progress.",
+    "default_priority": "low",
+    "default_source_hints": [
+      "Chronological primary sources and milestone references"
+    ],
+    "default_query_templates": [
+      "{subject} {query_hints}",
+      "{subject} {section_title} timeline"
+    ],
+    "fallback_enabled": false
+  },
+  {
+    "id": "quantitative_metric",
+    "description": "Support claims with explicit metrics, KPIs, or time-series values.",
+    "default_priority": "high",
+    "default_source_hints": [
+      "Structured metrics, KPI tables, or time-series data"
+    ],
+    "default_query_templates": [
+      "{subject} {query_hints}",
+      "{subject} {section_title} metrics"
+    ],
+    "fallback_enabled": true
+  },
+  {
+    "id": "derivation",
+    "description": "Explain causal drivers, decomposition, bridges, or computed relationships.",
+    "default_priority": "high",
+    "default_source_hints": [
+      "Evidence needed to derive or decompose the claimed mechanism"
+    ],
+    "default_query_templates": [
+      "{subject} {query_hints}",
+      "{subject} {section_title} drivers"
+    ],
+    "fallback_enabled": false
+  },
+  {
+    "id": "ecosystem_supply_chain",
+    "description": "Map suppliers, upstream/downstream roles, and ecosystem dependencies.",
+    "default_priority": "medium",
+    "default_source_hints": [
+      "Supplier, ecosystem, and value-chain evidence"
+    ],
+    "default_query_templates": [
+      "{subject} {query_hints}",
+      "{subject} {section_title} supply chain"
+    ],
+    "fallback_enabled": false
+  }
+]

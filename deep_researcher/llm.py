@@ -220,47 +220,42 @@ class MockBackend:
         joined = "\n".join(message["content"] for message in messages)
         if "TASK_KIND: planner" in joined:
             question = _extract_marker(joined, "QUESTION") or "research task"
+            semantic_mode = (_extract_marker(joined, "SEMANTIC_MODE") or "hybrid").strip().lower()
             response = {
                 "objective": "Deliver a structured research brief for: {0}".format(question),
                 "research_brief": "Focus on market shape, technical options, risks, and recommendations.",
+                "input_dependencies": [],
+                "source_requirements": ["Public web sources", "Primary documentation when available"],
+                "comparison_axes": ["Problem framing", "Execution approach", "Risks"],
                 "success_criteria": [
                     "Covers current landscape",
                     "Explains technical tradeoffs",
                     "Surfaces major risks",
                 ],
                 "risks": ["Source freshness", "Vendor bias"],
-                "sections": [
-                    {
-                        "id": "context",
-                        "title": "Context and Scope",
-                        "goal": "Clarify the problem, market, and scope.",
-                        "queries": [question, "{0} overview".format(question)],
-                    },
-                    {
-                        "id": "landscape",
-                        "title": "Landscape",
-                        "goal": "Map major players and approaches.",
-                        "queries": ["{0} landscape".format(question), "{0} competitors".format(question)],
-                    },
-                    {
-                        "id": "risks",
-                        "title": "Risks and Constraints",
-                        "goal": "Explain major delivery and adoption risks.",
-                        "queries": ["{0} risks".format(question), "{0} limitations".format(question)],
-                    },
-                    {
-                        "id": "recommendation",
-                        "title": "Recommendation",
-                        "goal": "Provide a decision-oriented recommendation.",
-                        "queries": ["{0} best practices".format(question), "{0} implementation strategy".format(question)],
-                    },
-                ],
+                "sections": _mock_planner_sections(question, semantic_mode=semantic_mode),
             }
             return json.dumps(response, ensure_ascii=False)
         if "TASK_KIND: section_research" in joined:
             section_title = _extract_marker(joined, "SECTION_TITLE") or "Section"
             source_ids = re.findall(r"S\d{3}", joined)[:3] or ["S001"]
             response = {
+                "thesis": "{0} shows a defensible pattern once the evidence is connected into explicit drivers.".format(section_title),
+                "key_drivers": [
+                    "{0} has a primary growth or positioning driver visible in the collected evidence.".format(section_title),
+                    "The available sources expose at least one tradeoff or constraint that affects the conclusion.",
+                ],
+                "reasoning_steps": [
+                    {
+                        "observation": "Collected evidence highlights multiple concrete signals for {0}.".format(section_title),
+                        "inference": "{0} can be analyzed through a driver-and-tradeoff lens instead of flat description.".format(section_title),
+                        "implication": "The final report should explain why the section matters, not only what facts were found.",
+                        "source_ids": source_ids[:2],
+                    }
+                ],
+                "counterpoints": [
+                    "Some evidence remains partial, so final claims should preserve uncertainty where coverage is thin."
+                ],
                 "summary": "{0} is supported by the collected sources and can be drafted.".format(section_title),
                 "findings": [
                     {
@@ -283,20 +278,45 @@ class MockBackend:
                 "continue_research": False,
                 "global_gaps": [],
                 "focus_sections": [],
+                "gap_tasks": [],
             }, ensure_ascii=False)
         if "TASK_KIND: audit" in joined:
             return json.dumps({
                 "status": "pass",
                 "issues": [],
             }, ensure_ascii=False)
+        if "TASK_KIND: report_section_writer" in joined:
+            title = _extract_marker(joined, "SECTION_TITLE")
+            if not title:
+                match = re.search(r'"title":\s*"([^"]+)"', joined)
+                title = match.group(1) if match else "Section"
+            return "\n".join([
+                "## {0}".format(title),
+                "",
+                "**Core Judgment**: {0} can be written as an analytical section instead of a flat fact list. [source:S001]".format(title),
+                "",
+                "**Why this matters**: the evidence packet carries drivers and reasoning steps that support a decision-useful interpretation. [source:S002]",
+                "",
+                "- The section packet includes traceable findings and can preserve citations. [source:S001]",
+                "- Counterpoints can be stated explicitly when the evidence is incomplete. [source:S002]",
+            ])
+        if "TASK_KIND: report_overview" in joined:
+            return json.dumps({
+                "title": "# Mock Deep Research Report",
+                "executive_summary": [
+                    "The run now assembles the report from smaller section-writing steps instead of relying on one long final write.",
+                    "This reduces the probability that the final writer call times out and still preserves analytical structure.",
+                ],
+                "conclusion": [
+                    "Hierarchical report assembly is more robust for long research runs.",
+                    "Section-level fallbacks keep the workflow debuggable even when a writer call fails.",
+                ],
+            }, ensure_ascii=False)
         if "TASK_KIND: report_writer" in joined:
             return (
                 "# Mock Deep Research Report\n\n"
                 "## Executive Summary\n\n"
-                "This report was generated in mock mode to validate the workflow.\n\n"
-                "## Findings\n\n"
-                "- The workflow can plan, collect evidence, and synthesize sections. [source:S001]\n"
-                "- The trace and checkpoints make intermediate debugging straightforward. [source:S002]\n"
+                "- This legacy path remains available for compatibility. [source:S001]\n"
             )
         return "{}"
 
@@ -309,6 +329,228 @@ def _extract_marker(text: str, key: str) -> str:
 
 def _safe_name(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]+", "-", value).strip("-") or "artifact"
+
+
+def _mock_evidence_requirement(
+    profile_id: str,
+    priority: str,
+    must_cover: List[str],
+    query_hints: List[str],
+    preferred_source_packs: List[str] = None,
+    rationale: str = "",
+) -> Dict[str, object]:
+    return {
+        "profile_id": profile_id,
+        "priority": priority,
+        "must_cover": must_cover,
+        "preferred_source_packs": preferred_source_packs or [],
+        "query_hints": query_hints,
+        "rationale": rationale or "Mock planner selected this evidence profile for the section.",
+    }
+
+
+def _mock_planner_sections(question: str, semantic_mode: str = "hybrid") -> List[Dict[str, object]]:
+    lowered = question.lower()
+    if "阳光电源" in question or "roe" in lowered or "格雷厄姆" in question or "彼得林奇" in question:
+        native = semantic_mode == "native"
+        return [
+            {
+                "id": "history",
+                "title": "发展历程与业务演进",
+                "goal": "梳理公司从单点产品到多业务平台的演进脉络。",
+                "queries": (
+                    ["阳光电源 官方 年报 发展历程", "阳光电源 投资者关系 业务演进"]
+                    if native else
+                    ["阳光电源 发展历程 主营业务", "阳光电源 官方 年报 业务演进"]
+                ),
+                "must_cover": ["关键里程碑", "业务扩张路径", "技术平台演进"],
+                "evidence_requirements": [
+                    _mock_evidence_requirement(
+                        "primary_source",
+                        "high",
+                        ["关键里程碑", "业务扩张路径"],
+                        ["official report", "investor relations"],
+                        ["official_docs_pack"],
+                    ),
+                    _mock_evidence_requirement(
+                        "timeline_history",
+                        "medium",
+                        ["关键里程碑", "技术平台演进"],
+                        ["timeline", "history"],
+                    ),
+                ],
+            },
+            {
+                "id": "financials",
+                "title": "财务质量与关键指标",
+                "goal": "解释盈利质量、成长性和需要补齐的核心指标。",
+                "queries": (
+                    ["阳光电源 site:cn.tradingview.com ROE EPS PEG", "阳光电源 site:futunn.com 营收 净利润 杜邦分析"]
+                    if native else
+                    ["阳光电源 ROE 营收 净利润", "阳光电源 杜邦分析 估值"]
+                ),
+                "must_cover": ["ROE", "营收与净利润", "估值指标"],
+                "evidence_requirements": [
+                    _mock_evidence_requirement(
+                        "primary_source",
+                        "high",
+                        ["ROE", "营收与净利润"],
+                        ["annual report", "quarterly report"],
+                        ["official_docs_pack"],
+                    ),
+                    _mock_evidence_requirement(
+                        "quantitative_metric",
+                        "high",
+                        ["ROE", "估值指标"],
+                        ["metrics", "valuation", "eps", "peg"],
+                        ["market_data_pack"],
+                    ),
+                    _mock_evidence_requirement(
+                        "derivation",
+                        "high",
+                        ["杜邦分析", "ROE"],
+                        ["drivers", "decomposition"],
+                    ),
+                    _mock_evidence_requirement(
+                        "comparative_benchmark",
+                        "medium",
+                        ["竞争对手对比", "行业位置"],
+                        ["peer comparison", "market share"],
+                        ["market_data_pack"],
+                    ),
+                ],
+            },
+        ]
+    if "tpu" in lowered or "光模块" in question or "supply chain" in lowered:
+        native = semantic_mode == "native"
+        return [
+            {
+                "id": "architecture",
+                "title": "方案结构与关键组件",
+                "goal": "解释新方案的核心结构、部件和技术变化。",
+                "queries": (
+                    ["Google TPU optical module official blog", "Google TPU optical module architecture paper"]
+                    if native else
+                    ["Google TPU optical module architecture", "Google TPU 光模块 方案"]
+                ),
+                "must_cover": ["光模块方案", "关键组件", "系统结构"],
+                "evidence_requirements": [
+                    _mock_evidence_requirement(
+                        "implementation_detail",
+                        "high",
+                        ["光模块方案", "系统结构"],
+                        ["architecture", "implementation"],
+                    ),
+                    _mock_evidence_requirement(
+                        "structural_breakdown",
+                        "high",
+                        ["关键组件", "模块分解"],
+                        ["components", "breakdown"],
+                    ),
+                ],
+            },
+            {
+                "id": "supply-chain",
+                "title": "上游供应链与生态依赖",
+                "goal": "识别关键供应商和产业链依赖关系。",
+                "queries": (
+                    ["Google TPU optical module suppliers", "TPU optical module upstream supply chain"]
+                    if native else
+                    ["Google TPU optical module suppliers", "TPU 光模块 上游 供应链"]
+                ),
+                "must_cover": ["供应商", "上游环节", "生态依赖"],
+                "evidence_requirements": [
+                    _mock_evidence_requirement(
+                        "ecosystem_supply_chain",
+                        "high",
+                        ["供应商", "上游环节", "生态依赖"],
+                        ["supplier", "upstream"],
+                        ["supply_chain_pack"],
+                    ),
+                    _mock_evidence_requirement(
+                        "structural_breakdown",
+                        "medium",
+                        ["器件与环节映射"],
+                        ["component mapping"],
+                        ["supply_chain_pack"],
+                    ),
+                ],
+            },
+        ]
+    native = semantic_mode == "native"
+    return [
+        {
+            "id": "context",
+            "title": "Context and Scope",
+            "goal": "Clarify the problem, market, and scope.",
+            "queries": (
+                ["{0} official blog".format(question), "{0} overview".format(question)]
+                if native else
+                [question, "{0} overview".format(question)]
+            ),
+            "must_cover": ["Problem definition", "Scope boundaries"],
+            "evidence_requirements": [
+                _mock_evidence_requirement(
+                    "primary_source",
+                    "high",
+                    ["Problem definition"],
+                    ["official docs", "official blog"],
+                    ["official_docs_pack"],
+                ),
+            ],
+        },
+        {
+            "id": "landscape",
+            "title": "Landscape",
+            "goal": "Map major players and approaches.",
+            "queries": ["{0} landscape".format(question), "{0} competitors".format(question)],
+            "must_cover": ["Major players", "Approach differences"],
+            "evidence_requirements": [
+                _mock_evidence_requirement(
+                    "comparative_benchmark",
+                    "medium",
+                    ["Major players", "Approach differences"],
+                    ["comparison", "alternatives"],
+                ),
+            ],
+        },
+        {
+            "id": "mechanics",
+            "title": "Mechanics and Implementation",
+            "goal": "Explain how the subject works in practice.",
+            "queries": (
+                ["{0} github repo".format(question), "{0} architecture".format(question)]
+                if native else
+                ["{0} implementation".format(question), "{0} architecture".format(question)]
+            ),
+            "must_cover": ["Execution approach", "Tooling or system design"],
+            "evidence_requirements": [
+                _mock_evidence_requirement(
+                    "implementation_detail",
+                    "high",
+                    ["Execution approach", "Tooling or system design"],
+                    ["implementation", "architecture"],
+                    ["repo_pack"],
+                ),
+            ],
+        },
+        {
+            "id": "recommendation",
+            "title": "Recommendation",
+            "goal": "Provide a decision-oriented recommendation.",
+            "queries": ["{0} best practices".format(question), "{0} implementation strategy".format(question)],
+            "must_cover": ["Recommended approach", "Implementation guidance"],
+            "evidence_requirements": [
+                _mock_evidence_requirement(
+                    "primary_source",
+                    "medium",
+                    ["Recommended approach"],
+                    ["best practices", "official guidance"],
+                    ["official_docs_pack"],
+                ),
+            ],
+        },
+    ]
 
 
 def render_messages(messages: List[Dict[str, str]]) -> str:

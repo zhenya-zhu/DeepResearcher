@@ -58,6 +58,6 @@
 ## 这次演示暴露出的工程问题
 
 - 原先 `run_id` 只有秒级精度，并行 planning 时会撞目录。我已经修成了微秒级。
-- 原先 `planner.max_output_tokens=1800` 对长 query 会截断 JSON。我已经把默认值提高到 `4000`。
+- 原先 `planner.max_output_tokens=1800` 对长 query 会截断 JSON。我已经把默认值提高到 `8000`。
 - planning 现在已经可以单独跑并输出 `plan.md / plan.json`，方便先调 planning 再调 research。
 - 当前 context window 预算已经和输出上限分离，并按模型画像推断，不再把所有主模型都压成 `128k`。

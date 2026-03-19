@@ -2,6 +2,11 @@
 
 [queries.md](/Users/I561043/SAP/DeepResearcher/queries.md) 现在作为 planning 阶段的测试输入池。
 
+它支持两种格式：
+
+- 编号列表
+- JSON/松散 JSON 的 query 列表；每项可以额外带 `plan`，作为 reference planning 结果
+
 ## 当前 query
 
 1. 阳光电源公司研究

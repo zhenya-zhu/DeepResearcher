@@ -9,3 +9,7 @@ runs/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+workspace_sources/
+inputs/
+reports/
+.gstack/

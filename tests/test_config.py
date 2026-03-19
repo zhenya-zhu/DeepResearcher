@@ -31,6 +31,46 @@ class ConfigEnvAliasTest(unittest.TestCase):
             config = AppConfig.from_env()
         self.assertEqual(config.model_capabilities_file, Path("/tmp/custom-model-capabilities.json"))
 
+    def test_reads_evidence_profiles_file_env(self) -> None:
+        env = {
+            "DEEP_RESEARCHER_EVIDENCE_PROFILES_FILE": "/tmp/custom-evidence-profiles.json",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            config = AppConfig.from_env()
+        self.assertEqual(config.evidence_profiles_file, Path("/tmp/custom-evidence-profiles.json"))
+
+    def test_reads_source_packs_file_env(self) -> None:
+        env = {
+            "DEEP_RESEARCHER_SOURCE_PACKS_FILE": "/tmp/custom-source-packs.json",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            config = AppConfig.from_env()
+        self.assertEqual(config.source_packs_file, Path("/tmp/custom-source-packs.json"))
+
+    def test_reads_network_mode_env(self) -> None:
+        env = {
+            "DEEP_RESEARCHER_NETWORK_MODE": "direct",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            config = AppConfig.from_env()
+        self.assertEqual(config.network_mode, "direct")
+
+    def test_reads_semantic_mode_env(self) -> None:
+        env = {
+            "DEEP_RESEARCHER_SEMANTIC_MODE": "native",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            config = AppConfig.from_env()
+        self.assertEqual(config.semantic_mode, "native")
+
+    def test_reads_workspace_source_env(self) -> None:
+        env = {
+            "DEEP_RESEARCHER_WORKSPACE_SOURCES": "/tmp/reports:/tmp/annual-report.pdf",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            config = AppConfig.from_env()
+        self.assertEqual(config.workspace_sources, [Path("/tmp/reports"), Path("/tmp/annual-report.pdf")])
+
 
 if __name__ == "__main__":
     unittest.main()
