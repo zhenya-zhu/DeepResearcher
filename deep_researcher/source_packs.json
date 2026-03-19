@@ -1,0 +1,79 @@
+[
+  {
+    "id": "official_docs_pack",
+    "description": "Prioritize official docs, blogs, reports, or release notes.",
+    "applies_to_profiles": ["primary_source", "implementation_detail", "timeline_history"],
+    "query_templates": [
+      "{subject} official docs",
+      "{subject} official blog",
+      "{subject} official report"
+    ],
+    "source_hints": ["Official docs, blogs, reports, or release notes"],
+    "allowed_domains": [],
+    "priority_bias": "high",
+    "preferred": true,
+    "optional": false
+  },
+  {
+    "id": "repo_pack",
+    "description": "Prefer code repositories and source trees.",
+    "applies_to_profiles": ["primary_source", "implementation_detail"],
+    "query_templates": [
+      "{subject} github repo",
+      "{subject} source code"
+    ],
+    "source_hints": ["Code repositories and source trees"],
+    "allowed_domains": ["github.com", "gitlab.com"],
+    "priority_bias": "medium",
+    "preferred": true,
+    "optional": true
+  },
+  {
+    "id": "paper_pack",
+    "description": "Prefer technical papers, whitepapers, and formal reports.",
+    "applies_to_profiles": ["primary_source", "implementation_detail", "timeline_history"],
+    "query_templates": [
+      "{subject} paper",
+      "{subject} technical report"
+    ],
+    "source_hints": ["Technical papers, whitepapers, and formal reports"],
+    "allowed_domains": [],
+    "priority_bias": "medium",
+    "preferred": false,
+    "optional": true
+  },
+  {
+    "id": "market_data_pack",
+    "description": "Use structured market-data providers for metrics and valuation-style evidence when needed.",
+    "applies_to_profiles": ["quantitative_metric", "derivation", "regional_breakdown", "comparative_benchmark"],
+    "query_templates": [
+      "{subject} site:futunn.com {query_hints}",
+      "{subject} site:cn.tradingview.com {query_hints}",
+      "{subject} site:stock.cheesefortune.com {query_hints}"
+    ],
+    "source_hints": [
+      "Futu key metrics pages",
+      "TradingView financials and documents pages",
+      "CheeseFortune stock data pages when indexed"
+    ],
+    "allowed_domains": ["futunn.com", "cn.tradingview.com", "stock.cheesefortune.com"],
+    "priority_bias": "medium",
+    "preferred": true,
+    "optional": true
+  },
+  {
+    "id": "supply_chain_pack",
+    "description": "Prioritize supplier, upstream, and ecosystem mapping queries.",
+    "applies_to_profiles": ["ecosystem_supply_chain", "structural_breakdown", "comparative_benchmark"],
+    "query_templates": [
+      "{subject} supplier {query_hints}",
+      "{subject} upstream {query_hints}",
+      "{subject} ecosystem {query_hints}"
+    ],
+    "source_hints": ["Supplier, upstream, and ecosystem mapping sources"],
+    "allowed_domains": [],
+    "priority_bias": "medium",
+    "preferred": true,
+    "optional": true
+  }
+]

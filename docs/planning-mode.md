@@ -57,6 +57,13 @@ uv run python -m deep_researcher \
 - `artifacts/prompts/planning.md`: 发给模型的 prompt
 - `artifacts/responses/planning-<model>.md`: 模型原始返回
 
+新版 planning 结果除了 `objective / success_criteria / risks / sections` 之外，还会补：
+
+- `input_dependencies`: 任务依赖的用户文件或私有输入
+- `source_requirements`: 必须拿到的证据类型
+- `comparison_axes`: 比较型任务的关键分析维度
+- `must_cover`: 每个 section 不应漏掉的检查点
+
 ## 看什么算“plan 质量好”
 
 - `objective` 足够具体，不是复述用户原问题。

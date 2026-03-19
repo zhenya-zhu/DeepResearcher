@@ -152,6 +152,8 @@ class RunArtifacts:
             "",
             "Question: {0}".format(getattr(state, "question", "")),
             "",
+            "Semantic Mode: `{0}`".format(getattr(state, "semantic_mode", "hybrid")),
+            "",
             "## Sections",
         ]
         for section in getattr(state, "sections", []):
@@ -181,6 +183,8 @@ class RunArtifacts:
             "",
             "Question: {0}".format(getattr(state, "question", "")),
             "",
+            "Semantic Mode: `{0}`".format(getattr(state, "semantic_mode", "hybrid")),
+            "",
             "## Objective",
             "",
             getattr(state, "objective", ""),
@@ -194,6 +198,24 @@ class RunArtifacts:
                 research_brief,
                 "",
             ])
+        input_dependencies = getattr(state, "input_dependencies", [])
+        if input_dependencies:
+            lines.append("## Input Dependencies")
+            lines.append("")
+            lines.extend("- {0}".format(item) for item in input_dependencies)
+            lines.append("")
+        source_requirements = getattr(state, "source_requirements", [])
+        if source_requirements:
+            lines.append("## Source Requirements")
+            lines.append("")
+            lines.extend("- {0}".format(item) for item in source_requirements)
+            lines.append("")
+        comparison_axes = getattr(state, "comparison_axes", [])
+        if comparison_axes:
+            lines.append("## Comparison Axes")
+            lines.append("")
+            lines.extend("- {0}".format(item) for item in comparison_axes)
+            lines.append("")
         success_criteria = getattr(state, "success_criteria", [])
         if success_criteria:
             lines.append("## Success Criteria")
@@ -214,9 +236,40 @@ class RunArtifacts:
             if section.goal:
                 lines.append("Goal: {0}".format(section.goal))
                 lines.append("")
+            if getattr(section, "must_cover", None):
+                lines.append("Must Cover:")
+                lines.extend("- {0}".format(item) for item in section.must_cover)
+                lines.append("")
             if section.queries:
                 lines.append("Queries:")
                 lines.extend("- `{0}`".format(query) for query in section.queries)
+                lines.append("")
+            evidence_requirements = getattr(section, "evidence_requirements", [])
+            if evidence_requirements:
+                lines.append("Evidence Requirements:")
+                for requirement in evidence_requirements:
+                    lines.append(
+                        "- `{0}` priority=`{1}` packs=`{2}`".format(
+                            requirement.profile_id,
+                            requirement.priority,
+                            ", ".join(requirement.preferred_source_packs) or "none",
+                        )
+                    )
+                    if requirement.must_cover:
+                        lines.append("  must_cover: {0}".format(", ".join(requirement.must_cover)))
+                    if requirement.query_hints:
+                        lines.append("  query_hints: {0}".format(", ".join(requirement.query_hints)))
+                    if requirement.rationale:
+                        lines.append("  rationale: {0}".format(requirement.rationale))
+                lines.append("")
+            resolved_profiles = getattr(section, "resolved_profiles", [])
+            resolved_source_packs = getattr(section, "resolved_source_packs", [])
+            if resolved_profiles or resolved_source_packs:
+                lines.append("Resolved Semantics:")
+                if resolved_profiles:
+                    lines.append("- profiles: {0}".format(", ".join(resolved_profiles)))
+                if resolved_source_packs:
+                    lines.append("- source_packs: {0}".format(", ".join(resolved_source_packs)))
                 lines.append("")
         return self.write_text("plan.md", "\n".join(lines).rstrip() + "\n")
 
@@ -224,8 +277,12 @@ class RunArtifacts:
         payload = {
             "run_id": getattr(state, "run_id", ""),
             "question": getattr(state, "question", ""),
+            "semantic_mode": getattr(state, "semantic_mode", "hybrid"),
             "objective": getattr(state, "objective", ""),
             "research_brief": getattr(state, "research_brief", ""),
+            "input_dependencies": getattr(state, "input_dependencies", []),
+            "source_requirements": getattr(state, "source_requirements", []),
+            "comparison_axes": getattr(state, "comparison_axes", []),
             "success_criteria": getattr(state, "success_criteria", []),
             "risks": getattr(state, "risks", []),
             "sections": [
@@ -234,6 +291,10 @@ class RunArtifacts:
                     "title": section.title,
                     "goal": section.goal,
                     "queries": section.queries,
+                    "must_cover": getattr(section, "must_cover", []),
+                    "evidence_requirements": [item.__dict__ for item in getattr(section, "evidence_requirements", [])],
+                    "resolved_profiles": getattr(section, "resolved_profiles", []),
+                    "resolved_source_packs": getattr(section, "resolved_source_packs", []),
                 }
                 for section in getattr(state, "sections", [])
             ],
