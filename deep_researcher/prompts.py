@@ -127,7 +127,8 @@ def build_section_research_messages(
                 "Use reasoning_steps to capture observation -> inference -> implication links that can appear in the final report.\n"
                 "Use counterpoints for tensions, alternative explanations, or places where evidence is still thin.\n"
                 "Keep the JSON compact and decision-useful.\n"
-                "Prefer at most 4 key_drivers, 3 reasoning_steps, 4 counterpoints, 6 open_questions, and 4 follow_up_queries.\n"
+                "Prefer at most 6 key_drivers, 5 reasoning_steps, 5 counterpoints, 8 open_questions, and 6 follow_up_queries.\n"
+                "IMPORTANT: Generate follow_up_queries aggressively. Think about what specific details, comparisons, data points, or mechanism explanations are still missing. Each follow_up_query should target a specific gap that would make the analysis deeper and more authoritative.\n"
                 "If evidence is thin, reduce breadth instead of returning a long exhaustive list.\n"
                 "Return JSON only."
             ),
@@ -351,11 +352,18 @@ def build_section_report_messages(state: ResearchState, section: SectionState) -
                 "TASK_KIND: report_section_writer\n"
                 "Write exactly one markdown section for the final report.\n"
                 "Only use facts present in the section packet.\n"
-                "Add inline citations in the form [source:S001].\n"
-                "Start with a heading in the form ## <section title>.\n"
-                "Make the section analytical: state the core judgment, explain the driver logic, and note meaningful counterpoints.\n"
-                "Keep it concise enough to fit in one response: prefer 4-8 short paragraphs or bullets rather than an exhaustive essay.\n"
-                "End every paragraph or bullet cleanly with punctuation or a citation bracket.\n"
+                "Add inline citations in the form [source:S001] after every factual claim.\n"
+                "Start with a ## heading, then use ### subheadings to organize the section into 2-4 logical subsections.\n"
+                "WRITING QUALITY REQUIREMENTS:\n"
+                "- Write 8-15 substantial paragraphs total across all subsections.\n"
+                "- Each paragraph should be 3-6 sentences with clear topic sentences and analytical depth.\n"
+                "- Go beyond surface description: explain mechanisms, causes, implications, and trade-offs.\n"
+                "- Use observation → inference → implication chains to build analytical arguments.\n"
+                "- Include comparison tables (markdown tables) when comparing systems, approaches, metrics, or features.\n"
+                "- When evidence supports it, include specific numbers, dates, percentages, and concrete examples.\n"
+                "- Connect this section's analysis to the broader research question — explain why this matters.\n"
+                "- State counterpoints and limitations directly rather than pretending certainty.\n"
+                "End every paragraph cleanly with punctuation or a citation bracket.\n"
                 "Do not write any executive summary, conclusion, appendix, or sources list."
             ),
         },
@@ -396,8 +404,10 @@ def build_report_overview_messages(state: ResearchState) -> List[Dict[str, str]]
             "role": "system",
             "content": (
                 "TASK_KIND: report_overview\n"
-                "Draft a short title, executive summary bullets, and conclusion bullets for the final report.\n"
-                "Keep it concise and decision-oriented.\n"
+                "Draft a title, executive summary, and conclusion for the final report.\n"
+                "The executive_summary should be 2-3 substantial paragraphs (not just bullets) that synthesize key findings across all sections, highlight the most important insights, and frame the overall narrative.\n"
+                "The conclusion should be 2-3 paragraphs that bring together cross-cutting themes, state the overall assessment, and note remaining open questions.\n"
+                "Write in a professional analytical tone. Be specific and cite concrete findings from the sections.\n"
                 "Return JSON only."
             ),
         },
