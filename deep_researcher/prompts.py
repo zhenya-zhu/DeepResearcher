@@ -366,6 +366,7 @@ def build_section_report_messages(state: ResearchState, section: SectionState) -
                 "- When evidence supports it, include specific numbers, dates, percentages, and concrete examples.\n"
                 "- Connect this section's analysis to the broader research question — explain why this matters.\n"
                 "- State counterpoints and limitations directly rather than pretending certainty.\n"
+                "- Cite as many DIFFERENT sources as possible. Avoid over-relying on 2-3 sources — spread citations across all available evidence packets to maximize source diversity.\n"
                 "End every paragraph cleanly with punctuation or a citation bracket.\n"
                 "Do not write any executive summary, conclusion, appendix, or sources list."
             ),

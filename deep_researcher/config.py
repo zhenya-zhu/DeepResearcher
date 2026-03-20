@@ -89,7 +89,7 @@ class AppConfig:
     max_rounds: int = 3
     max_sections: int = 7
     max_queries_per_section: int = 3
-    max_results_per_query: int = 6
+    max_results_per_query: int = 8
     max_sources_per_section: int = 8
     max_chars_per_source: int = 4000
     search_region: str = "us-en"
@@ -146,7 +146,7 @@ class AppConfig:
             max_rounds=_env_int("DEEP_RESEARCHER_MAX_ROUNDS", 3),
             max_sections=_env_int("DEEP_RESEARCHER_MAX_SECTIONS", 7),
             max_queries_per_section=_env_int("DEEP_RESEARCHER_MAX_QUERIES_PER_SECTION", 3),
-            max_results_per_query=_env_int("DEEP_RESEARCHER_MAX_RESULTS_PER_QUERY", 6),
+            max_results_per_query=_env_int("DEEP_RESEARCHER_MAX_RESULTS_PER_QUERY", 8),
             max_sources_per_section=_env_int("DEEP_RESEARCHER_MAX_SOURCES_PER_SECTION", 8),
             max_chars_per_source=_env_int("DEEP_RESEARCHER_MAX_CHARS_PER_SOURCE", 4000),
             search_region=os.getenv("DEEP_RESEARCHER_SEARCH_REGION", "us-en"),
