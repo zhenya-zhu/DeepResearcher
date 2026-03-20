@@ -70,7 +70,8 @@ def build_planning_messages(
                 "- When primary sources exist, explicitly require them in source_requirements; examples include official docs, blogs, papers, code repos, standards, manuals, reports, filings, and investor-relations materials.\n"
                 "- Use evidence_requirements to declare what kind of evidence each section needs. Only use profile_id and preferred_source_packs from the provided registries.\n"
                 "- Do not only group by vendor or chronology when mechanism-level comparison is important.\n"
-                "- Keep the plan concise and execution-oriented. Prefer 2-3 queries per section and 5-8 must_cover bullets per section.\n"
+                "- Keep the plan concise and execution-oriented. Prefer 3-4 diverse queries per section (each targeting different sources or angles) and 5-8 must_cover bullets per section.\n"
+                "- SECTION COUNT: Aim for exactly 5-6 sections. Combine related subtopics into broader thematic sections rather than creating many narrow ones.\n"
                 "- Keep source_requirements, comparison_axes, success_criteria, and risks focused; do not enumerate everything you know.\n"
                 "- Keep entity names consistent with the user question. Do not invent alternate company or product names.\n"
                 "- The full response must remain a single complete JSON object.\n"
@@ -128,7 +129,7 @@ def build_section_research_messages(
                 "Use counterpoints for tensions, alternative explanations, or places where evidence is still thin.\n"
                 "Keep the JSON compact and decision-useful.\n"
                 "Prefer at most 6 key_drivers, 5 reasoning_steps, 5 counterpoints, 8 open_questions, and 6 follow_up_queries.\n"
-                "IMPORTANT: Generate follow_up_queries aggressively. Think about what specific details, comparisons, data points, or mechanism explanations are still missing. Each follow_up_query should target a specific gap that would make the analysis deeper and more authoritative.\n"
+                "IMPORTANT: Generate follow_up_queries aggressively. Think about what specific details, comparisons, data points, or mechanism explanations are still missing. Each follow_up_query should target a DIFFERENT source type or angle than existing evidence — prioritize official documentation, academic papers, engineering blog posts, and open-source repository documentation to maximize source diversity.\n"
                 "If evidence is thin, reduce breadth instead of returning a long exhaustive list.\n"
                 "Return JSON only."
             ),
@@ -215,6 +216,8 @@ def build_gap_review_messages(
             "content": (
                 "TASK_KIND: gap_review\n"
                 "You are the supervisor deciding whether another research round is needed.\n"
+                "Focus on source DIVERSITY: if a section only has evidence from 2-3 sources, generate follow_up_queries targeting different source types (official docs, academic papers, engineering blogs, open-source repos).\n"
+                "Generate gap_tasks only when critical evidence is missing or source diversity is low. Do not generate tasks for minor polish or incremental improvements.\n"
                 "Convert missing evidence into explicit remediation tasks whenever possible.\n"
                 "Use action=workspace when first-party local files or curated workspace materials should resolve the gap.\n"
                 "Use action=derive when the missing point can be computed, decomposed, or bridged from evidence already in hand.\n"
