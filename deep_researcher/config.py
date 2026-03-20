@@ -86,7 +86,7 @@ class AppConfig:
     semantic_mode: str = "hybrid"
     timeout_seconds: int = 120
     rpm_limit: int = 16
-    max_rounds: int = 2
+    max_rounds: int = 3
     max_sections: int = 7
     max_queries_per_section: int = 3
     max_results_per_query: int = 6
@@ -143,7 +143,7 @@ class AppConfig:
             semantic_mode=_env_choice("DEEP_RESEARCHER_SEMANTIC_MODE", "hybrid", ["hybrid", "native"]),
             timeout_seconds=_env_int("DEEP_RESEARCHER_TIMEOUT_SECONDS", 120),
             rpm_limit=_env_int("DEEP_RESEARCHER_RPM_LIMIT", 16),
-            max_rounds=_env_int("DEEP_RESEARCHER_MAX_ROUNDS", 2),
+            max_rounds=_env_int("DEEP_RESEARCHER_MAX_ROUNDS", 3),
             max_sections=_env_int("DEEP_RESEARCHER_MAX_SECTIONS", 7),
             max_queries_per_section=_env_int("DEEP_RESEARCHER_MAX_QUERIES_PER_SECTION", 3),
             max_results_per_query=_env_int("DEEP_RESEARCHER_MAX_RESULTS_PER_QUERY", 6),
