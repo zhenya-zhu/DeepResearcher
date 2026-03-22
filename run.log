@@ -1,0 +1,6 @@
+Run ID: 20260320-052454-977735
+Run directory: runs/20260320-052454-977735
+Report: runs/20260320-052454-977735/report.md
+Trace: runs/20260320-052454-977735/trace.html
+Audit issues: 1
+- [medium] General: Audit step failed: JSON parsing failed for report-audit via model anthropic--claude-4.6-sonnet: Expecting ',' delimiter: line 32 column 118 (char 2530)

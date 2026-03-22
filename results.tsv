@@ -1,0 +1,11 @@
+commit	score	status	description	notes
+1090763	45.4	keep	baseline - no changes	char=13002 cit=61 src=15 tbl=0 para=288 (rescored with fixed table detect)
+2de5a41	73.6	keep	exp1: deeper sections, richer overview, more sources/queries	char=30942 cit=161 src=28 tbl=5 para=323
+4710024	76.9	keep	exp2: mandatory tables, longer paragraphs, more queries	char=33931 cit=174 src=24 tbl=7 para=375
+4afd545	78.7	keep	exp3: more sources (8/section), longer paragraphs (5-10 sent)	char=44289 cit=236 src=42 tbl=7 para=544
+0b83864	76.5	discard	exp4: 4 queries/section, diverse citations	char=43352 cit=184 src=31 tbl=7 para=515 WORSE unique_sources
+8ada973	78.0	discard	exp5: 6 sections, 2-3 subsections, fix table detection	char=41849 cit=182 src=38 tbl=7 h2=11(too many) h3=21
+2994548	81.1	keep	exp6: 3 rounds, fewer subsections(1-2), no forced tables	char=36714 cit=131 src=37 tbl=4 h2=11 h3=26 para=53(perfect) avg=672
+e17b82d	73.7	discard	exp7: 5-6 sections strict, no subsections, conservative gap, 4 round ceiling	char=33194 cit=109 src=25(WORSE) tbl=3 h2=10 h3=0(overcorrected!) para=49
+409bc6d	83.7	keep	exp8: 5-6 sections, 3-4 diverse queries, source diversity gap review	char=33243 cit=131 src=33 tbl=4 h2=10 h3=11(close) para=50(good) avg=650
+d0b2478	86.0	keep	exp9: 8 results/query, cite diverse sources instruction	char=25417(perfect!) cit=151 src=32 tbl=3 h2=9 h3=11 para=43 avg=576
