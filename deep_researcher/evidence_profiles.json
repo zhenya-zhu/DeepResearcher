@@ -9,7 +9,7 @@
     ],
     "default_query_templates": [
       "{subject} {document_terms}",
-      "{subject} {section_title}"
+      "{subject} {query_hints}"
     ],
     "fallback_enabled": true
   },
@@ -23,7 +23,7 @@
     ],
     "default_query_templates": [
       "{subject} {query_hints}",
-      "{subject} {section_title} implementation"
+      "{subject} {query_hints} implementation"
     ],
     "fallback_enabled": true
   },
@@ -35,8 +35,7 @@
       "Source material that decomposes the subject into major parts"
     ],
     "default_query_templates": [
-      "{subject} {query_hints}",
-      "{subject} {section_title} breakdown"
+      "{subject} {query_hints}"
     ],
     "fallback_enabled": true
   },
@@ -48,8 +47,7 @@
       "Regional or market segmentation data"
     ],
     "default_query_templates": [
-      "{subject} {query_hints}",
-      "{subject} {section_title} regional"
+      "{subject} {query_hints}"
     ],
     "fallback_enabled": false
   },
@@ -61,8 +59,7 @@
       "Comparative benchmarks, rankings, peer evidence"
     ],
     "default_query_templates": [
-      "{subject} {query_hints}",
-      "{subject} {section_title} comparison"
+      "{subject} {query_hints}"
     ],
     "fallback_enabled": false
   },
@@ -74,8 +71,7 @@
       "Chronological primary sources and milestone references"
     ],
     "default_query_templates": [
-      "{subject} {query_hints}",
-      "{subject} {section_title} timeline"
+      "{subject} {query_hints}"
     ],
     "fallback_enabled": false
   },
@@ -87,8 +83,7 @@
       "Structured metrics, KPI tables, or time-series data"
     ],
     "default_query_templates": [
-      "{subject} {query_hints}",
-      "{subject} {section_title} metrics"
+      "{subject} {query_hints}"
     ],
     "fallback_enabled": true
   },
@@ -100,8 +95,7 @@
       "Evidence needed to derive or decompose the claimed mechanism"
     ],
     "default_query_templates": [
-      "{subject} {query_hints}",
-      "{subject} {section_title} drivers"
+      "{subject} {query_hints}"
     ],
     "fallback_enabled": false
   },
@@ -113,8 +107,7 @@
       "Supplier, ecosystem, and value-chain evidence"
     ],
     "default_query_templates": [
-      "{subject} {query_hints}",
-      "{subject} {section_title} supply chain"
+      "{subject} {query_hints}"
     ],
     "fallback_enabled": false
   }

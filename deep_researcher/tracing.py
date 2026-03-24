@@ -4,6 +4,30 @@ import datetime as dt
 import html
 import json
 import re
+import sys
+import time
+from threading import Lock
+
+
+_STAGE_ICONS = {
+    "run": "\U0001f52c",        # 🔬
+    "planning": "\U0001f4cb",   # 📋
+    "research": "\U0001f50d",   # 🔍
+    "section": "\U0001f4c4",    # 📄
+    "review": "\U0001f4ca",     # 📊
+    "synthesis": "\U0001f517",  # 🔗
+    "writing": "\u270d\ufe0f",  # ✍️
+    "critique": "\U0001f9d0",   # 🧐
+    "report": "\U0001f4dd",     # 📝
+    "audit": "\U0001f50e",      # 🔎
+}
+
+_LEVEL_COLORS = {
+    "ERROR": "\033[31m",   # red
+    "WARN": "\033[33m",    # yellow
+    "WARNING": "\033[33m",
+    "INFO": "\033[0m",     # default
+}
 
 
 def _safe_name(value: str) -> str:
@@ -12,11 +36,15 @@ def _safe_name(value: str) -> str:
 
 
 class RunArtifacts:
-    def __init__(self, run_root: Path, run_id: str) -> None:
+    def __init__(self, run_root: Path, run_id: str, verbose: bool = True) -> None:
         self.run_root = run_root
         self.run_id = run_id
         self.run_dir = run_root / run_id
         self.events_path = self.run_dir / "events.jsonl"
+        self.verbose = verbose
+        self._start = time.monotonic()
+        self._print_lock = Lock()
+        self._use_color = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
         for rel_path in [
             "artifacts/prompts",
             "artifacts/responses",
@@ -65,6 +93,79 @@ class RunArtifacts:
         }
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+        self._emit_progress(stage, actor, message, level, data)
+
+    def _elapsed(self) -> str:
+        seconds = int(time.monotonic() - self._start)
+        return "{0:02d}:{1:02d}".format(seconds // 60, seconds % 60)
+
+    def _emit_progress(
+        self,
+        stage: str,
+        actor: str,
+        message: str,
+        level: str,
+        data: Optional[Dict[str, Any]],
+    ) -> None:
+        if not self.verbose:
+            return
+        if level == "DEBUG":
+            return
+
+        # Only show milestone events, skip internal machinery
+        _MILESTONE_PREFIXES = (
+            "Run started", "Run completed",
+            "Plan-only run started", "Plan-only run completed",
+            "Research plan created", "Planning failed",
+            "Plan artifacts",
+            "Starting research round", "Reached max rounds",
+            "Researching section", "Section synthesis completed",
+            "Section blocked",
+            "Gap review completed", "Gap review failed",
+            "Cross-section synthesis",
+            "Writing section", "Section report written",
+            "Section critique", "Section revised",
+            "Report assembled", "Report overview",
+            "Audit completed", "Audit failed",
+        )
+        if level not in ("ERROR", "WARN", "WARNING") and not any(
+            message.startswith(prefix) for prefix in _MILESTONE_PREFIXES
+        ):
+            return
+
+        icon = _STAGE_ICONS.get(stage, "\u2022")  # bullet fallback
+        elapsed = self._elapsed()
+
+        # Build compact data summary from key fields
+        extras = []
+        if data:
+            for key in ("model", "round", "avg_sufficiency", "quality_score",
+                        "source_count", "error", "title"):
+                if key in data:
+                    extras.append("{0}={1}".format(key, data[key]))
+        suffix = " ({0})".format(", ".join(extras)) if extras else ""
+
+        # Indent section-level messages
+        indent = "  " if stage == "section" else ""
+
+        line = "[{elapsed}] {indent}{icon} {message}{suffix}".format(
+            elapsed=elapsed,
+            indent=indent,
+            icon=icon,
+            message=message,
+            suffix=suffix,
+        )
+
+        reset = "\033[0m" if self._use_color else ""
+        color = ""
+        if self._use_color:
+            color = _LEVEL_COLORS.get(level, "")
+
+        with self._print_lock:
+            sys.stderr.write("{color}{line}{reset}\n".format(
+                color=color, line=line, reset=reset,
+            ))
+            sys.stderr.flush()
 
     def load_events(self) -> List[Dict[str, Any]]:
         if not self.events_path.exists():
@@ -301,7 +402,127 @@ class RunArtifacts:
         }
         return self.write_json("plan.json", payload)
 
+    def render_trace(self, state: Any) -> str:
+        events = self.load_events()
+        lines = [
+            "# Research Trace",
+            "",
+            "Run ID: `{0}`".format(self.run_id),
+            "",
+            "Question: {0}".format(getattr(state, "question", "")),
+            "",
+        ]
+
+        # Group events by stage for summary
+        stage_events: Dict[str, List[Dict[str, Any]]] = {}
+        for event in events:
+            stage = event.get("stage", "unknown")
+            stage_events.setdefault(stage, []).append(event)
+
+        # Decision log — key decisions and their rationale
+        lines.append("## Decision Log")
+        lines.append("")
+        decision_count = 0
+        for event in events:
+            level = event.get("level", "INFO")
+            stage = event.get("stage", "")
+            message = event.get("message", "")
+            data = event.get("data", {})
+            # Only log decisions and significant events
+            if stage == "planning" or level in ("WARNING", "ERROR") or any(
+                keyword in message.lower()
+                for keyword in ["created", "completed", "failed", "fallback", "gap", "round", "synthesis"]
+            ):
+                decision_count += 1
+                time_str = event.get("time", "")
+                data_summary = ""
+                if data:
+                    key_items = []
+                    for k, v in list(data.items())[:4]:
+                        if isinstance(v, (str, int, float, bool)):
+                            key_items.append("{0}={1}".format(k, v))
+                        elif isinstance(v, list):
+                            key_items.append("{0}=[{1} items]".format(k, len(v)))
+                    if key_items:
+                        data_summary = " ({0})".format(", ".join(key_items))
+                lines.append(
+                    "{0}. `{1}` [{2}] {3}{4}".format(
+                        decision_count, time_str, stage, message, data_summary
+                    )
+                )
+        lines.append("")
+
+        # Source evidence summary
+        lines.append("## Sources Collected")
+        lines.append("")
+        sources = getattr(state, "sources", {})
+        if sources:
+            lines.append("| ID | Title | Credibility | Status |")
+            lines.append("|---|---|---|---|")
+            for sid, src in sorted(sources.items()):
+                title = getattr(src, "title", "")[:50]
+                cred = getattr(src, "credibility_score", 0.5)
+                status = getattr(src, "fetch_status", "unknown")
+                lines.append("| {0} | {1} | {2:.2f} | {3} |".format(sid, title, cred, status))
+        else:
+            lines.append("No sources collected.")
+        lines.append("")
+
+        # Section research summary
+        lines.append("## Section Research Summary")
+        lines.append("")
+        for section in getattr(state, "sections", []):
+            lines.append("### {0}".format(section.title))
+            lines.append("")
+            lines.append("- Evidence sufficiency: {0}/5".format(section.evidence_sufficiency))
+            lines.append("- Sources: {0}".format(len(section.source_ids)))
+            lines.append("- Findings: {0}".format(len(section.findings)))
+            if section.open_questions:
+                lines.append("- Open questions: {0}".format(", ".join(section.open_questions[:3])))
+            lines.append("")
+
+        # Cross-section synthesis summary
+        synthesis = getattr(state, "cross_section_synthesis", {})
+        if synthesis:
+            lines.append("## Cross-Section Synthesis")
+            lines.append("")
+            contradictions = synthesis.get("contradictions", [])
+            if contradictions:
+                lines.append("### Contradictions")
+                for c in contradictions:
+                    lines.append(
+                        "- **{0}** vs **{1}**: {2} → {3}".format(
+                            c.get("section_a", "?"),
+                            c.get("section_b", "?"),
+                            c.get("claim_a", ""),
+                            c.get("resolution_hint", ""),
+                        )
+                    )
+                lines.append("")
+            themes = synthesis.get("cross_cutting_themes", [])
+            if themes:
+                lines.append("### Cross-Cutting Themes")
+                for t in themes:
+                    lines.append("- {0}".format(t))
+                lines.append("")
+
+        # Gap tasks summary
+        gap_tasks = getattr(state, "gap_tasks", [])
+        if gap_tasks:
+            lines.append("## Gap Tasks")
+            lines.append("")
+            for task in gap_tasks:
+                lines.append(
+                    "- [{0}] {1}: {2} (priority={3})".format(
+                        task.status, task.task_id, task.gap, task.priority
+                    )
+                )
+            lines.append("")
+
+        return self.write_text("research-trace.md", "\n".join(lines) + "\n")
+
     def finalize(self, state: Any) -> None:
         self.write_json("state/final.json", state.to_dict() if hasattr(state, "to_dict") else state)
         self.render_summary(state)
         self.render_trace_html()
+        self.render_trace(state)
