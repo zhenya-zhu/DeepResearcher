@@ -21,10 +21,12 @@ def structural_metrics(text: str) -> dict:
     lines = text.split("\n")
     char_count = len(text)
     word_count = len(text.split())
-    h2_count = sum(1 for l in lines if l.startswith("## "))
+    # Count headings: ## for h2, ### for h3 (but not #### etc counted as h3)
+    # Some Gemini reports use ##### instead of ## — normalize by counting any heading depth
+    h2_count = sum(1 for l in lines if re.match(r'^#{2,5}\s+\d*\.?\s*\S', l) and not l.startswith("### "))
     h3_count = sum(1 for l in lines if l.startswith("### "))
-    # Count markdown tables by looking for separator rows (|---|---|)
-    table_separator = re.compile(r'^\|[\s\-:|]+\|', re.MULTILINE)
+    # Count markdown tables by looking for separator rows (|---|---| or | \------ |)
+    table_separator = re.compile(r'^\|[\s\-:|\\]+\|', re.MULTILINE)
     table_count = len(table_separator.findall(text))
     # Count citation references (multiple formats)
     # [source:S001] format (DeepResearcher)
@@ -33,15 +35,16 @@ def structural_metrics(text: str) -> dict:
     # [1] or [2] bracket format
     bracket_num_pattern = re.compile(r'\[\d{1,2}\]')
     bracket_citations = bracket_num_pattern.findall(text)
-    # Bare superscript numbers before Chinese punctuation (Gemini format: 系统3。)
-    bare_ref_pattern = re.compile(r'(?<=[^\d\s])\d{1,2}(?=[。，；、\n])')
+    # Bare superscript numbers before Chinese punctuation (Gemini format)
+    # Matches both "系统3。" (no space) and "衍生物 1。" (with space)
+    bare_ref_pattern = re.compile(r'(?<=[^\d])\s?\d{1,2}(?=[。，；、\n])')
     bare_citations = bare_ref_pattern.findall(text)
     citation_count = len(source_id_citations) + len(bracket_citations) + len(bare_citations)
     # Count unique sources
     source_pattern = re.compile(r'\[source:(S\d+)\]')
     unique_sources_set = set(source_pattern.findall(text))
-    # Also count from endnotes section
-    endnote_pattern = re.compile(r'^\d{1,2}\.\s', re.MULTILINE)
+    # Also count from endnotes section: "1. text" at line start, excluding image refs
+    endnote_pattern = re.compile(r'^\d{1,2}\.\s+(?!\[image)', re.MULTILINE)
     endnote_sources = len(endnote_pattern.findall(text))
     unique_sources = max(len(unique_sources_set), endnote_sources)
     # Paragraph analysis: blocks separated by blank lines, longer than 50 chars
@@ -63,27 +66,36 @@ def structural_metrics(text: str) -> dict:
 
 def compute_structural_score(report_metrics: dict, reference_metrics: dict) -> float:
     """Score 0-100 based on how close the report's structural metrics are to the reference."""
+    # "more is better" dimensions: exceeding reference gets full credit
+    more_is_better = {
+        "char_count", "citations", "unique_sources", "tables",
+        "h2_sections", "h3_subsections", "paragraphs",
+    }
+    # "proximity" dimensions: closer to reference is better, slight tolerance band
     dimensions = {
-        "char_count": 20,       # length matters a lot
-        "h2_sections": 10,
-        "h3_subsections": 10,
+        "char_count": 15,
+        "h2_sections": 8,
+        "h3_subsections": 8,
         "tables": 10,
         "citations": 15,
-        "unique_sources": 15,
-        "paragraphs": 10,
-        "avg_paragraph_chars": 10,
+        "unique_sources": 20,
+        "paragraphs": 8,
+        "avg_paragraph_chars": 16,
     }
     total = 0
     for key, weight in dimensions.items():
         ref_val = max(reference_metrics.get(key, 1), 1)
         rep_val = report_metrics.get(key, 0)
-        # ratio capped at 1.0 (exceeding reference is fine, counts as 1.0)
-        ratio = min(rep_val / ref_val, 1.5) / 1.5  # allow up to 1.5x, normalize
-        # For very close match (0.8-1.2x), give full credit
-        if 0.8 <= rep_val / ref_val <= 1.2:
-            ratio = 1.0
-        elif rep_val / ref_val > 1.2:
-            ratio = max(0.8, 1.0 - abs(rep_val / ref_val - 1.0) * 0.3)  # slight penalty for far over
+        raw_ratio = rep_val / ref_val
+        if key in more_is_better:
+            # Reaching or exceeding reference = full credit; below = proportional
+            ratio = min(raw_ratio, 1.0)
+        else:
+            # Proximity scoring: 0.7-1.3x range gets full credit, outside is penalized gently
+            if 0.7 <= raw_ratio <= 1.3:
+                ratio = 1.0
+            else:
+                ratio = max(0.5, 1.0 - abs(raw_ratio - 1.0) * 0.5)
         total += ratio * weight
     return round(total, 1)
 
@@ -166,65 +178,182 @@ def llm_judge_score(report_text: str, reference_text: str) -> dict:
     return None
 
 
-def compute_composite_score(structural_score: float, llm_scores: dict) -> float:
+def compute_semantic_coverage(report_text: str, reference_text: str) -> float:
+    """Keyword-based topic coverage score (0-100). No LLM needed."""
+    # Extract key topics from reference by finding repeated meaningful phrases
+    ref_words = set(re.findall(r'[\w\u4e00-\u9fff]{2,}', reference_text.lower()))
+    rep_words = set(re.findall(r'[\w\u4e00-\u9fff]{2,}', report_text.lower()))
+    # Filter to words that appear multiple times in reference (likely topics)
+    from collections import Counter
+    ref_counter = Counter(re.findall(r'[\w\u4e00-\u9fff]{2,}', reference_text.lower()))
+    topic_words = {word for word, count in ref_counter.items() if count >= 3 and len(word) >= 3}
+    if not topic_words:
+        return 100.0  # no topics to check
+    covered = topic_words & rep_words
+    return round(len(covered) / len(topic_words) * 100, 1)
+
+
+def compute_composite_score(structural_score: float, llm_scores: dict, semantic_score: float = None) -> float:
     """Weighted composite score. Returns 0-100."""
     if llm_scores is None:
+        # Structural 70% + Semantic 30% when no LLM
+        if semantic_score is not None:
+            return round(structural_score * 0.7 + semantic_score * 0.3, 1)
         return structural_score  # fallback to structural only
 
-    # LLM dimensions weighted equally, total weight = 70
+    # LLM dimensions weighted equally, total weight = 60
     llm_keys = ["structure", "depth", "evidence", "coherence", "tables",
                  "paragraph_quality", "summary_conclusion", "completeness"]
     llm_total = sum(llm_scores.get(k, 0) for k in llm_keys)
-    llm_normalized = (llm_total / (len(llm_keys) * 10)) * 70  # 0-70
+    llm_normalized = (llm_total / (len(llm_keys) * 10)) * 60  # 0-60
 
-    # Structural = 30
-    structural_normalized = structural_score * 0.3
+    # Structural = 25
+    structural_normalized = structural_score * 0.25
 
-    return round(llm_normalized + structural_normalized, 1)
+    # Semantic = 15
+    semantic_normalized = (semantic_score or structural_score) * 0.15
+
+    return round(llm_normalized + structural_normalized + semantic_normalized, 1)
+
+
+def evaluate_single(report_path: str, reference_path: str, use_llm: bool = True) -> dict:
+    """Evaluate a single report against a reference. Returns scores dict."""
+    report_text = Path(report_path).read_text(encoding="utf-8")
+    reference_text = Path(reference_path).read_text(encoding="utf-8")
+
+    rep_metrics = structural_metrics(report_text)
+    ref_metrics = structural_metrics(reference_text)
+    struct_score = compute_structural_score(rep_metrics, ref_metrics)
+    semantic_score = compute_semantic_coverage(report_text, reference_text)
+
+    llm_scores = None
+    if use_llm:
+        llm_scores = llm_judge_score(report_text, reference_text)
+
+    composite = compute_composite_score(struct_score, llm_scores, semantic_score)
+    return {
+        "report_path": report_path,
+        "reference_path": reference_path,
+        "report_metrics": rep_metrics,
+        "reference_metrics": ref_metrics,
+        "structural_score": struct_score,
+        "semantic_score": semantic_score,
+        "llm_scores": llm_scores,
+        "composite": composite,
+    }
 
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate a DeepResearcher report")
-    parser.add_argument("report", help="Path to the report to evaluate")
-    parser.add_argument("--reference", default="sample_result/Deep Research 技术探索与实现.md",
+    parser.add_argument("report", nargs="?", help="Path to the report to evaluate")
+    parser.add_argument("--reference", default=None,
                        help="Path to the Gemini reference report")
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM judge, structural only")
+    parser.add_argument("--multi-query", default=None,
+                       help="Path to queries.json for multi-query evaluation. "
+                            "Evaluates each query's latest run against its gemini_report reference.")
+    parser.add_argument("--runs-dir", default="runs",
+                       help="Directory containing run outputs (default: runs)")
     args = parser.parse_args()
 
-    report_text = Path(args.report).read_text(encoding="utf-8")
-    reference_text = Path(args.reference).read_text(encoding="utf-8")
+    if args.multi_query:
+        # Multi-query evaluation mode
+        with open(args.multi_query, "r", encoding="utf-8") as f:
+            queries = json.load(f)
+        runs_dir = Path(args.runs_dir)
+        all_run_dirs = sorted(runs_dir.glob("202*"), reverse=True) if runs_dir.exists() else []
 
-    # Structural metrics
-    rep_metrics = structural_metrics(report_text)
-    ref_metrics = structural_metrics(reference_text)
-    structural_score = compute_structural_score(rep_metrics, ref_metrics)
+        # Build index: map each run dir to its query (from plan.json)
+        def _run_query(run_dir: Path) -> str:
+            plan_path = run_dir / "plan.json"
+            if plan_path.exists():
+                try:
+                    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+                    return plan.get("question", "")
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            return ""
+
+        def _query_match(run_q: str, entry_q: str) -> bool:
+            """Check if a run's question matches a query entry (prefix match, 60 chars)."""
+            return run_q[:60] == entry_q[:60] if run_q and entry_q else False
+
+        scores = []
+        for i, query_entry in enumerate(queries):
+            ref_path = query_entry.get("gemini_report")
+            if not ref_path or not Path(ref_path).exists():
+                print(f"\nQuery {i+1}: skipped (no reference report)")
+                continue
+            # Find the latest run directory matching this query
+            report_found = None
+            matched_run = None
+            for run_dir in all_run_dirs:
+                report_path = run_dir / "report.md"
+                if not report_path.exists():
+                    continue
+                run_q = _run_query(run_dir)
+                if _query_match(run_q, query_entry["query"]):
+                    report_found = str(report_path)
+                    matched_run = run_dir.name
+                    break
+            if not report_found:
+                print(f"\nQuery {i+1}: skipped (no matching run found)")
+                continue
+            print(f"\n{'='*60}")
+            print(f"Query {i+1}: {query_entry['query'][:80]}...")
+            print(f"  Run: {matched_run}")
+            result = evaluate_single(report_found, ref_path, use_llm=not args.no_llm)
+            scores.append(result["composite"])
+            print(f"  Structural: {result['structural_score']}/100")
+            print(f"  Semantic:   {result['semantic_score']}/100")
+            print(f"  Composite:  {result['composite']}/100")
+            # Show key metric gaps
+            rep_m = result["report_metrics"]
+            ref_m = result["reference_metrics"]
+            gaps = []
+            for key in ["unique_sources", "citations", "tables", "h2_sections"]:
+                if rep_m.get(key, 0) < ref_m.get(key, 1):
+                    gaps.append(f"{key}: {rep_m[key]} vs {ref_m[key]}")
+            if gaps:
+                print(f"  Gaps: {', '.join(gaps)}")
+        if scores:
+            avg = round(sum(scores) / len(scores), 1)
+            print(f"\n{'='*60}")
+            print(f"AGGREGATE SCORE ({len(scores)} queries): {avg}/100")
+            print(f"\nMETRIC:{avg}")
+        else:
+            print("\nNo matching runs found for any query.")
+        return
+
+    # Single report evaluation (original mode)
+    if not args.report:
+        parser.error("report path is required (or use --multi-query)")
+
+    reference = args.reference or "sample_result/Deep Research 技术探索与实现.md"
+    result = evaluate_single(args.report, reference, use_llm=not args.no_llm)
+
+    rep_metrics = result["report_metrics"]
+    ref_metrics = result["reference_metrics"]
 
     print("=== Structural Metrics ===")
     print(f"{'Metric':<25} {'Report':>10} {'Reference':>10}")
     for key in rep_metrics:
         print(f"{key:<25} {rep_metrics[key]:>10} {ref_metrics[key]:>10}")
-    print(f"\nStructural Score: {structural_score}/100")
+    print(f"\nStructural Score: {result['structural_score']}/100")
+    print(f"Semantic Coverage: {result['semantic_score']}/100")
 
-    # LLM judge
-    llm_scores = None
-    if not args.no_llm:
+    if result["llm_scores"]:
         print("\n=== LLM Judge ===")
-        llm_scores = llm_judge_score(report_text, reference_text)
-        if llm_scores:
-            for k, v in llm_scores.items():
-                if k != "overall_notes":
-                    print(f"  {k}: {v}/10")
-            if "overall_notes" in llm_scores:
-                print(f"  notes: {llm_scores['overall_notes']}")
-        else:
-            print("  (LLM judge unavailable, using structural score only)")
+        for k, v in result["llm_scores"].items():
+            if k != "overall_notes":
+                print(f"  {k}: {v}/10")
+            if "overall_notes" in result["llm_scores"]:
+                print(f"  notes: {result['llm_scores']['overall_notes']}")
+    elif not args.no_llm:
+        print("\n  (LLM judge unavailable, using structural + semantic only)")
 
-    # Composite
-    composite = compute_composite_score(structural_score, llm_scores)
-    print(f"\n=== COMPOSITE SCORE: {composite}/100 ===")
-
-    # Print machine-readable line
-    print(f"\nMETRIC:{composite}")
+    print(f"\n=== COMPOSITE SCORE: {result['composite']}/100 ===")
+    print(f"\nMETRIC:{result['composite']}")
 
 
 if __name__ == "__main__":
