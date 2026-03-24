@@ -53,6 +53,7 @@ class SectionState:
     open_questions: List[str] = field(default_factory=list)
     verification_notes: List[str] = field(default_factory=list)
     draft: str = ""
+    evidence_sufficiency: float = 0.0
 
 
 @dataclass
@@ -66,6 +67,7 @@ class SourceRecord:
     fetch_status: str = "unfetched"
     raw_artifact: str = ""
     text_artifact: str = ""
+    credibility_score: float = 0.5
 
 
 @dataclass
@@ -127,6 +129,7 @@ class ResearchState:
     report_markdown: str = ""
     audit_issues: List[AuditIssue] = field(default_factory=list)
     debug_notes: List[str] = field(default_factory=list)
+    cross_section_synthesis: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -157,6 +160,7 @@ class ResearchState:
                 open_questions=item.get("open_questions", []),
                 verification_notes=item.get("verification_notes", []),
                 draft=item.get("draft", ""),
+                evidence_sufficiency=item.get("evidence_sufficiency", 0.0),
             ))
         sources = {}
         for source_id, item in raw.get("sources", {}).items():
@@ -170,6 +174,7 @@ class ResearchState:
                 fetch_status=item.get("fetch_status", "unfetched"),
                 raw_artifact=item.get("raw_artifact", ""),
                 text_artifact=item.get("text_artifact", ""),
+                credibility_score=item.get("credibility_score", 0.5),
             )
         searched_results = [SearchResultRecord(**item) for item in raw.get("searched_results", [])]
         audit_issues = [AuditIssue(**item) for item in raw.get("audit_issues", [])]
@@ -196,6 +201,7 @@ class ResearchState:
             report_markdown=raw.get("report_markdown", ""),
             audit_issues=audit_issues,
             debug_notes=raw.get("debug_notes", []),
+            cross_section_synthesis=raw.get("cross_section_synthesis", {}),
         )
 
     @classmethod

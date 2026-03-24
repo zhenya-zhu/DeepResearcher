@@ -72,9 +72,12 @@ def extract_first_json(text: str) -> Any:
             except Exception:
                 repaired = _repair_jsonish_text(candidate)
                 if repaired != candidate:
-                    parsed = _decode_from_start(repaired)
-                    if isinstance(parsed, dict):
-                        return parsed
+                    try:
+                        parsed = _decode_from_start(repaired)
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except Exception:
+                        pass
                 raise ValueError("Top-level JSON object is invalid or incomplete.")
         try:
             return _decode_first_json(candidate)

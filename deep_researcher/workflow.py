@@ -1,16 +1,18 @@
-from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional
 import datetime as dt
 import json
 import re
-from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+from urllib.parse import urlparse, urlsplit
 
 from .config import AppConfig
 from .llm import AnthropicCompatibleBackend, MockBackend, ModelRouter, MultiProviderBackend, OpenAICompatibleBackend
 from .model_capabilities import load_model_capability_registry
 from .prompts import (
     build_audit_messages,
+    build_cross_section_synthesis_messages,
     build_gap_review_messages,
     build_planning_messages,
     build_report_overview_messages,
@@ -35,6 +37,99 @@ def _run_id() -> str:
     return dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S-%f")
 
 
+def _extract_outbound_links(raw_html: str, base_url: str, max_links: int = 10) -> List[str]:
+    """Extract outbound HTTP(S) links from raw HTML, deduplicating and filtering."""
+    try:
+        from html.parser import HTMLParser
+
+        class _LinkExtractor(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__()
+                self.links: List[str] = []
+
+            def handle_starttag(self, tag: str, attrs: List) -> None:
+                if tag == "a":
+                    for name, value in attrs:
+                        if name == "href" and value and value.startswith("http"):
+                            self.links.append(value)
+
+        parser = _LinkExtractor()
+        parser.feed(raw_html[:200000])  # limit parsing to first 200K chars
+        parsed_base = urlparse(base_url)
+        seen = set()
+        result = []
+        for link in parser.links:
+            parsed = urlparse(link)
+            # Skip same-domain links, fragments, and common non-content URLs
+            if parsed.netloc == parsed_base.netloc:
+                continue
+            if any(skip in link.lower() for skip in [
+                "javascript:", "mailto:", "tel:", "#", "login", "signup",
+                "privacy", "terms", "cookie", ".pdf", ".zip", ".png", ".jpg",
+            ]):
+                continue
+            normalized = "{0}://{1}{2}".format(parsed.scheme, parsed.netloc, parsed.path.rstrip("/"))
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(link)
+            if len(result) >= max_links:
+                break
+        return result
+    except Exception:
+        return []
+
+
+# --- Source credibility heuristic ---
+
+_HIGH_CREDIBILITY_DOMAINS = {
+    "openai.com": 0.95, "anthropic.com": 0.95, "deepmind.google": 0.95,
+    "ai.google": 0.95, "blog.google": 0.90, "cloud.google.com": 0.90,
+    "arxiv.org": 0.90, "nature.com": 0.90, "science.org": 0.90,
+    "ieee.org": 0.85, "acm.org": 0.85, "proceedings.mlr.press": 0.85,
+    "github.com": 0.80, "huggingface.co": 0.80,
+    "docs.python.org": 0.85, "pytorch.org": 0.85, "tensorflow.org": 0.85,
+    "microsoft.com": 0.85, "research.google": 0.90,
+    "en.wikipedia.org": 0.70, "zh.wikipedia.org": 0.70,
+    "reuters.com": 0.85, "bloomberg.com": 0.85, "ft.com": 0.85,
+    "techcrunch.com": 0.70, "theverge.com": 0.65,
+    "medium.com": 0.55, "substack.com": 0.55,
+    "reddit.com": 0.40, "quora.com": 0.40,
+}
+
+_DOMAIN_TIER_PATTERNS = [
+    (re.compile(r"\.gov$|\.gov\.\w+$"), 0.85),   # government
+    (re.compile(r"\.edu$|\.edu\.\w+$|\.ac\.\w+$"), 0.80),  # academic
+    (re.compile(r"\.org$"), 0.65),                 # organizations
+]
+
+
+def _score_source_credibility(url: str, title: str) -> float:
+    """Heuristic credibility score 0-1 based on domain reputation and content signals."""
+    try:
+        host = urlsplit(url).netloc.lower()
+    except Exception:
+        return 0.5
+    # Strip www prefix
+    if host.startswith("www."):
+        host = host[4:]
+    # Exact domain match
+    if host in _HIGH_CREDIBILITY_DOMAINS:
+        return _HIGH_CREDIBILITY_DOMAINS[host]
+    # Check parent domain (e.g., blog.openai.com → openai.com)
+    parts = host.split(".")
+    if len(parts) > 2:
+        parent = ".".join(parts[-2:])
+        if parent in _HIGH_CREDIBILITY_DOMAINS:
+            return _HIGH_CREDIBILITY_DOMAINS[parent]
+    # Pattern-based tier
+    for pattern, score in _DOMAIN_TIER_PATTERNS:
+        if pattern.search(host):
+            return score
+    # Default for unknown domains
+    return 0.5
+
+
 def _unique(values: List[str]) -> List[str]:
     seen = set()
     result = []
@@ -57,7 +152,7 @@ def _line_ends_cleanly(text: str) -> bool:
         return False
     if re.search(r"\[source:S\d+\]$", stripped):
         return True
-    return bool(re.search(r"([。！？.!?；;]|[)\]）】》」』\"”'’`])$", stripped))
+    return bool(re.search("([。！？.!?；;]|[)\\]）】》」』\u201c\u201d\u2018\u2019`])$", stripped))
 
 
 def _line_has_unbalanced_tail(text: str) -> bool:
@@ -70,11 +165,11 @@ def _line_has_unbalanced_tail(text: str) -> bool:
             return True
     asymmetric_pairs = (
         ("(", ")"),
-        ("（", "）"),
+        ("\uff08", "\uff09"),
         ("[", "]"),
-        ("【", "】"),
-        ("“", "”"),
-        ("‘", "’"),
+        ("\u3010", "\u3011"),
+        ("\u201c", "\u201d"),
+        ("\u2018", "\u2019"),
     )
     for opening, closing in asymmetric_pairs:
         if stripped.count(opening) > stripped.count(closing):
@@ -99,6 +194,35 @@ _GENERIC_QUERY_CHUNKS = {
     "为什么",
     "如何",
     "怎么",
+    "技术",
+    "原理",
+    "进展",
+    "发展",
+    "探索",
+    "实现",
+    "综述",
+    "概述",
+    "介绍",
+    "背景",
+    "现状",
+    "趋势",
+    "前景",
+    "方向",
+    "方案",
+    "特点",
+    "比较",
+    "对比",
+    "总结",
+    "梳理",
+    "解读",
+    "详解",
+    "深度",
+    "全面",
+    "最新",
+    "主要",
+    "核心",
+    "关键",
+    "重要",
 }
 
 _GENERIC_FOCUS_STOPWORDS = {
@@ -166,11 +290,23 @@ _LEADING_REQUEST_VERBS = (
 )
 
 
+def _is_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text))
+
+
+def _strip_chinese_particles(text: str) -> str:
+    text = re.sub(r"[的地得](?=[\u4e00-\u9fffa-zA-Z])", "", text)
+    text = re.sub(r"^[和与及在从对把被让给向往]+", "", text)
+    text = re.sub(r"[和与及]+$", "", text)
+    return text.strip()
+
+
 def _clean_query_chunk(chunk: str) -> str:
     if re.fullmatch(r"site:[A-Za-z0-9._/-]+", chunk.strip()):
         return chunk.strip()
-    chunk = re.sub(r"[\"'`“”‘’()\[\]{}<>]", " ", chunk)
+    chunk = re.sub("[\"\u2018\u2019\u201c\u201d'`()\u005b\u005d{}<>]", " ", chunk)
     chunk = re.sub(r"[:：,，;；|/\\]+", " ", chunk)
+    chunk = _strip_chinese_particles(chunk)
     chunk = re.sub(r"\s+", " ", chunk).strip(" .-_")
     return chunk.strip()
 
@@ -179,7 +315,17 @@ def _split_query_chunks(text: str) -> List[str]:
     chunks = []
     for raw in re.split(r"[\s,，、;；|/]+", text):
         chunk = _clean_query_chunk(raw)
-        if chunk:
+        if not chunk:
+            continue
+        # Split mixed CJK+Latin tokens into separate chunks
+        # e.g. "Research进展和原理" -> ["Research", "进展和原理"]
+        if re.search(r"[a-zA-Z]", chunk) and _is_cjk(chunk):
+            parts = re.split(r"(?<=[a-zA-Z])(?=[\u4e00-\u9fff])|(?<=[\u4e00-\u9fff])(?=[a-zA-Z])", chunk)
+            for part in parts:
+                part = part.strip()
+                if part:
+                    chunks.append(part)
+        else:
             chunks.append(chunk)
     return chunks
 
@@ -221,9 +367,44 @@ def _extract_subject(question: str) -> str:
                 cleaned = cleaned[len(verb):].strip(" ，,。.;:：")
                 changed = True
                 break
-    cleaned = re.split(r"[，,。；;：:]", cleaned, maxsplit=1)[0].strip()
+    cleaned = re.sub(r"^下面的?内容\s*", "", cleaned).strip(" ，,。.;:：")
+    # Strip filler request phrases that describe HOW to research, not WHAT
+    cleaned = re.sub(r"^(浅显易懂地?|详细地?|深入地?|全面地?|系统地?)(阐述|分析|研究|介绍|解读|说明|梳理)(一下)?\s*", "", cleaned).strip(" ，,。.;:：")
+    # If after stripping we have something generic (e.g. "整个体系") but the
+    # original question has a newline with substantial content after it, prefer
+    # extracting the subject from the content block after the first newline.
+    if "\n" in question:
+        after_newline = question.split("\n", 1)[1].strip()
+        if len(after_newline) > 20:
+            # The post-newline block likely has the real subject; extract leading term
+            first_line = re.split(r"[，,。；;：:\n]", after_newline, maxsplit=1)[0].strip()
+            # Use _split_query_chunks to get the first meaningful token
+            chunks = _split_query_chunks(first_line)
+            candidate = chunks[0] if chunks else ""
+            if candidate and len(candidate) >= 2:
+                cleaned = candidate
+    # Split on punctuation or newline to isolate the first meaningful fragment
+    cleaned = re.split(r"[，,。；;：:\n]", cleaned, maxsplit=1)[0].strip()
     cleaned = re.sub(r"^(一下|一下子)\s*", "", cleaned).strip()
     subject = _clean_query_chunk(cleaned)
+    # If the subject is still too long (e.g. a full sentence), compact it
+    # to extract the key noun phrases only
+    if subject and len(subject) > 20:
+        compacted = _compact_query(subject, max_chunks=3, max_chars=30)
+        # If compact didn't help (single long CJK chunk), extract key nouns
+        if len(compacted) > 30:
+            # Split CJK text on question marks, common function words
+            fragments = re.split(r"[？?！!]|能够|是否|哪些|哪一些|什么|如何|怎么", subject)
+            nouns = []
+            for frag in fragments:
+                frag = frag.strip()
+                if frag and len(frag) >= 2:
+                    nouns.append(frag)
+                if sum(len(n) for n in nouns) > 20:
+                    break
+            if nouns:
+                compacted = " ".join(nouns[:2])
+        subject = compacted
     if subject:
         return subject
     chunks = _split_query_chunks(question)
@@ -236,10 +417,7 @@ def _compact_query(text: str, max_chunks: int = 5, max_chars: int = 48) -> str:
         return ""
     preferred = []
     year_chunks = []
-    for index, chunk in enumerate(raw_chunks):
-        if index == 0:
-            preferred.append(chunk)
-            continue
+    for chunk in raw_chunks:
         if chunk in _GENERIC_QUERY_CHUNKS:
             continue
         if _is_year_chunk(chunk):
@@ -248,6 +426,23 @@ def _compact_query(text: str, max_chunks: int = 5, max_chars: int = 48) -> str:
         preferred.append(chunk)
     if not preferred:
         preferred = list(raw_chunks[:1])
+    # For mixed CJK+Latin queries, keep proper nouns (short CJK, e.g. product names)
+    # but drop long generic Chinese phrases that confuse English-region search engines.
+    has_latin = any(re.search(r"[a-zA-Z]{2,}", c) for c in preferred)
+    has_cjk = any(_is_cjk(c) for c in preferred)
+    if has_latin and has_cjk and len(preferred) > 1:
+        filtered = []
+        for chunk in preferred:
+            if _is_cjk(chunk):
+                # Keep short CJK chunks (likely proper nouns like 煤化工, FICC)
+                # Drop long CJK chunks (likely descriptions like 进展原理)
+                cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", chunk))
+                if cjk_chars <= 4:
+                    filtered.append(chunk)
+            else:
+                filtered.append(chunk)
+        if filtered:
+            preferred = filtered
     selected = preferred[:max_chunks]
     if year_chunks and len(selected) < max_chunks:
         selected.append(year_chunks[-1])
@@ -258,12 +453,31 @@ def _compact_query(text: str, max_chunks: int = 5, max_chars: int = 48) -> str:
     return compact or " ".join(raw_chunks[:max_chunks]).strip()
 
 
+_GENERIC_SINGLE_WORD_QUERIES = {
+    "metrics", "comparison", "drivers", "breakdown", "regional", "timeline",
+    "implementation", "supply chain", "official docs", "official blog",
+    "official report", "paper", "technical report", "github repo",
+    "source code",
+}
+
+
+def _is_low_quality_query(query: str) -> bool:
+    """Reject queries that are single generic words or lack a meaningful subject."""
+    stripped = query.strip().lower()
+    if stripped in _GENERIC_SINGLE_WORD_QUERIES:
+        return True
+    # A single word with no spaces and fewer than 6 chars is too vague
+    if " " not in stripped and len(stripped) < 6:
+        return True
+    return False
+
+
 def _normalized_queries(question: str, section_title: str, queries: List[str], limit: int) -> List[str]:
     normalized = []
     subject = _extract_subject(question)
     for query in queries:
         compact = _compact_query(query)
-        if compact:
+        if compact and not _is_low_quality_query(compact):
             normalized.append(compact)
     if not normalized and subject:
         normalized.append(_compact_query("{0} {1}".format(subject, section_title)))
@@ -291,6 +505,58 @@ def _search_query_variants(question: str, section: SectionState, raw_query: str)
         if focus_chunks:
             variants.append(_compact_query("{0} {1}".format(subject, " ".join(focus_chunks[:3])), max_chunks=4, max_chars=36))
     return _unique([item for item in variants if item])[:3]
+
+
+# --- Multi-strategy search ---
+
+_STRATEGY_SITE_PREFIXES = {
+    "academic": ["site:arxiv.org", "site:scholar.google.com", "site:semanticscholar.org"],
+    "official_docs": ["site:openai.com", "site:anthropic.com", "site:ai.google", "site:cloud.google.com"],
+    "code": ["site:github.com", "site:huggingface.co"],
+    "news": ["site:reuters.com", "site:bloomberg.com", "site:techcrunch.com"],
+    "technical_blog": ["site:blog.google", "site:openai.com/blog", "site:engineering."],
+}
+
+
+def _strategy_queries(base_query: str, section: "SectionState") -> List[str]:
+    """Generate additional strategy-specific queries based on section evidence requirements."""
+    augmented = []
+    # Check evidence requirements for source pack hints
+    source_packs = set()
+    for req in section.evidence_requirements:
+        for pack in req.preferred_source_packs:
+            source_packs.add(pack.lower())
+    # Check must_cover for domain hints
+    goal_lower = (section.goal or "").lower()
+    # Map source packs and goal keywords to strategies
+    strategies = set()
+    if any(kw in goal_lower for kw in ("paper", "academic", "research", "论文", "学术")):
+        strategies.add("academic")
+    if any(kw in goal_lower for kw in ("official", "documentation", "docs", "官方", "文档")):
+        strategies.add("official_docs")
+    if any(kw in goal_lower for kw in ("code", "implementation", "github", "open source", "代码", "开源")):
+        strategies.add("code")
+    if any(kw in goal_lower for kw in ("market", "industry", "news", "市场", "行业")):
+        strategies.add("news")
+    if any(kw in goal_lower for kw in ("blog", "technical", "engineering", "技术", "博客")):
+        strategies.add("technical_blog")
+    # Also map source pack names
+    for pack in source_packs:
+        if "academic" in pack or "paper" in pack:
+            strategies.add("academic")
+        elif "official" in pack or "doc" in pack:
+            strategies.add("official_docs")
+        elif "code" in pack or "github" in pack:
+            strategies.add("code")
+    # Generate one site-prefixed query per strategy (pick first prefix)
+    compact = _compact_query(base_query, max_chunks=4, max_chars=40)
+    if not compact:
+        return []
+    for strategy in list(strategies)[:3]:  # limit to 3 strategy queries
+        prefixes = _STRATEGY_SITE_PREFIXES.get(strategy, [])
+        if prefixes:
+            augmented.append("{0} {1}".format(prefixes[0], compact))
+    return augmented
 
 
 def _normalize_url(url: str) -> str:
@@ -389,6 +655,7 @@ class DeepResearcher:
         self.tracker: Optional[RunArtifacts] = None
         self.router: Optional[ModelRouter] = None
         self.workspace_documents: Optional[List[WorkspaceDocument]] = None
+        self._state_lock = Lock()
 
     @property
     def run_dir(self) -> Optional[str]:
@@ -402,7 +669,7 @@ class DeepResearcher:
         if state is None:
             state = ResearchState(run_id=_run_id(), question=question or "")
         state.semantic_mode = self.config.semantic_mode
-        self.tracker = RunArtifacts(self.config.run_root, state.run_id)
+        self.tracker = RunArtifacts(self.config.run_root, state.run_id, verbose=self.config.verbose)
         self.router = ModelRouter(self.backend, self.rate_limiter, self.tracker, capability_registry=self.capability_registry)
         self.tracker.log("run", "supervisor", "Run started", data={"question": state.question, "semantic_mode": state.semantic_mode})
 
@@ -414,14 +681,35 @@ class DeepResearcher:
             state.current_round = next_round
             self.tracker.log("research", "supervisor", "Starting research round", data={"round": next_round})
             pending_sections = [section for section in state.sections if section.status != "verified"]
-            for section in pending_sections:
-                self._research_section(state, section)
+            max_workers = min(len(pending_sections), 3) if not self.config.use_mock_tools else 1
+            if max_workers > 1:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(self._research_section, state, section): section
+                        for section in pending_sections
+                    }
+                    for future in as_completed(futures):
+                        section = futures[future]
+                        try:
+                            future.result()
+                        except Exception as exc:
+                            self.tracker.log(
+                                "section",
+                                section.section_id,
+                                "Parallel section research failed",
+                                level="ERROR",
+                                data={"error": str(exc), "title": section.title},
+                            )
+            else:
+                for section in pending_sections:
+                    self._research_section(state, section)
             self.tracker.checkpoint("round-{0}".format(next_round), state)
             if not self._review_gaps(state):
                 break
             next_round += 1
 
         if not state.report_markdown:
+            self._cross_section_synthesis(state)
             self._write_report(state)
 
         self._audit_report(state)
@@ -438,7 +726,7 @@ class DeepResearcher:
         if state is None:
             state = ResearchState(run_id=_run_id(), question=question or "")
         state.semantic_mode = self.config.semantic_mode
-        self.tracker = RunArtifacts(self.config.run_root, state.run_id)
+        self.tracker = RunArtifacts(self.config.run_root, state.run_id, verbose=self.config.verbose)
         self.router = ModelRouter(self.backend, self.rate_limiter, self.tracker, capability_registry=self.capability_registry)
         self.tracker.log("run", "supervisor", "Plan-only run started", data={"question": state.question, "mode": "plan_only", "semantic_mode": state.semantic_mode})
         if not state.sections:
@@ -880,7 +1168,12 @@ class DeepResearcher:
             section.queries,
             max(len(section.queries), self.config.max_queries_per_section + 2),
         )
-        query_budget = min(len(query_queue), self.config.max_queries_per_section + 2)
+        # Inject strategy-specific queries (site: prefixed) based on section evidence needs
+        if query_queue:
+            strategy_extras = _strategy_queries(query_queue[0], section)
+            if strategy_extras:
+                query_queue = query_queue + strategy_extras
+        query_budget = min(len(query_queue), self.config.max_queries_per_section + 4)
         for raw_query in query_queue[:query_budget]:
             hits = []
             search_variants = _search_query_variants(state.question, section, raw_query)
@@ -964,12 +1257,83 @@ class DeepResearcher:
                     "title": source.title,
                     "url": source.url,
                     "excerpt": source.excerpt or source.snippet,
+                    "source_type": "web",
                 })
                 web_sources_used += 1
                 if len(evidence_packets) >= max_total_evidence or web_sources_used >= self.config.max_sources_per_section:
                     break
             if len(evidence_packets) >= max_total_evidence or web_sources_used >= self.config.max_sources_per_section:
                 break
+
+        # Link following: extract outbound links from high-credibility sources
+        if evidence_packets and len(evidence_packets) < max_total_evidence:
+            known_urls = {source.url for source in state.sources.values()}
+            links_followed = 0
+            max_follow = 3
+            for packet in list(evidence_packets):
+                if links_followed >= max_follow:
+                    break
+                source = state.sources.get(packet["source_id"])
+                if not source or source.credibility_score < 0.8 or not source.raw_artifact:
+                    continue
+                raw_path = self.tracker.run_dir / source.raw_artifact if self.tracker else None
+                if not raw_path or not raw_path.exists():
+                    continue
+                try:
+                    raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    continue
+                outbound = _extract_outbound_links(raw_html, source.url, max_links=5)
+                for link_url in outbound:
+                    if links_followed >= max_follow:
+                        break
+                    if link_url in known_urls:
+                        continue
+                    known_urls.add(link_url)
+                    try:
+                        page = self.fetcher.fetch(link_url)
+                        if not page.text or len(page.text.strip()) < 100:
+                            continue
+                        final_url = page.final_url or link_url
+                        linked_source = self._register_source(
+                            state, "link-follow:{0}".format(source.source_id),
+                            page.title or link_url, final_url, "",
+                        )
+                        if linked_source.fetch_status != "unfetched":
+                            continue
+                        linked_source.raw_artifact = self.tracker.write_text(
+                            "sources/{0}.raw.html".format(linked_source.source_id), page.raw_html,
+                        )
+                        linked_source.excerpt = extract_relevant_passages(
+                            page.text, section.queries[0] if section.queries else state.question,
+                            max_chars=self.config.max_chars_per_source,
+                        )
+                        linked_source.fetch_status = "fetched"
+                        linked_source.text_artifact = self.tracker.write_text(
+                            "sources/{0}.txt".format(linked_source.source_id), page.text,
+                        )
+                        if linked_source.source_id not in section.source_ids:
+                            section.source_ids.append(linked_source.source_id)
+                        evidence_packets.append({
+                            "source_id": linked_source.source_id,
+                            "title": linked_source.title,
+                            "url": final_url,
+                            "excerpt": linked_source.excerpt,
+                            "source_type": "web",
+                        })
+                        links_followed += 1
+                        self.tracker.log(
+                            "link-follow",
+                            section.section_id,
+                            "Followed outbound link",
+                            data={
+                                "from_source": source.source_id,
+                                "to_url": final_url,
+                                "new_source": linked_source.source_id,
+                            },
+                        )
+                    except Exception:
+                        continue
 
         if not evidence_packets:
             section.status = "blocked"
@@ -1064,6 +1428,17 @@ class DeepResearcher:
                 self.config.verifier,
             )
             state.global_gaps = _trim_list([str(item) for item in payload.get("global_gaps", [])], 12)
+            # Parse and store section sufficiency scores
+            by_id = {section.section_id: section for section in state.sections}
+            for suf in payload.get("section_sufficiency", []):
+                sid = suf.get("section_id", "")
+                section = by_id.get(sid)
+                if section is not None:
+                    score = suf.get("score", 0)
+                    section.evidence_sufficiency = float(min(max(score, 0), 5))
+            avg_sufficiency = (
+                sum(s.evidence_sufficiency for s in state.sections) / max(len(state.sections), 1)
+            )
             focus_sections = payload.get("focus_sections", [])
             merge_result = self._merge_gap_tasks(payload.get("gap_tasks", []))
             tasks = merge_result["tasks"]
@@ -1083,6 +1458,7 @@ class DeepResearcher:
                 data={
                     "model": model,
                     "continue_research": payload.get("continue_research", False),
+                    "avg_sufficiency": round(avg_sufficiency, 2),
                     "global_gap_count": len(state.global_gaps),
                     "task_count": len(tasks),
                     "invalid_profiles": merge_result["invalid_profiles"],
@@ -1091,6 +1467,9 @@ class DeepResearcher:
                 artifacts={"gap_tasks": tasks_artifact},
             )
             continue_research = bool(payload.get("continue_research", False))
+            # Adaptive: also continue if average sufficiency is low
+            if avg_sufficiency < 3.5 and state.current_round < self.config.max_rounds:
+                continue_research = True
             if tasks and state.current_round < self.config.max_rounds:
                 continue_research = True
             if not continue_research:
@@ -1114,6 +1493,49 @@ class DeepResearcher:
         except Exception as exc:
             self.tracker.log("review", "verifier", "Gap review failed, stopping rounds", level="ERROR", data={"error": str(exc)})
             return False
+
+    def _cross_section_synthesis(self, state: ResearchState) -> None:
+        assert self.router is not None
+        assert self.tracker is not None
+        if len(state.sections) < 2:
+            return
+        messages = build_cross_section_synthesis_messages(state)
+        try:
+            _, payload = self.router.complete_json(
+                "cross-section-synthesis", messages, self.config.verifier,
+            )
+            state.cross_section_synthesis = payload
+            contradictions = payload.get("contradictions", [])
+            overlaps = payload.get("overlaps", [])
+            themes = payload.get("cross_cutting_themes", [])
+            self.tracker.log(
+                "synthesis",
+                "supervisor",
+                "Cross-section synthesis completed",
+                data={
+                    "contradictions": len(contradictions),
+                    "overlaps": len(overlaps),
+                    "themes": len(themes),
+                },
+            )
+            artifact = self.tracker.write_text(
+                "artifacts/cross-section-synthesis.json",
+                json.dumps(payload, ensure_ascii=False, indent=2),
+            )
+            self.tracker.log(
+                "synthesis",
+                "supervisor",
+                "Synthesis artifact written",
+                artifacts={"synthesis": artifact},
+            )
+        except Exception as exc:
+            self.tracker.log(
+                "synthesis",
+                "supervisor",
+                "Cross-section synthesis failed, proceeding without",
+                level="WARNING",
+                data={"error": str(exc)},
+            )
 
     def _write_report(self, state: ResearchState) -> None:
         assert self.router is not None
@@ -1214,56 +1636,106 @@ class DeepResearcher:
         assert self.router is not None
         assert self.tracker is not None
         messages = build_section_report_messages(state, section)
-        selection = replace(
-            self.config.writer,
-            max_output_tokens=min(self.config.writer.max_output_tokens, 4200),
-        )
-        for attempt in range(1, 3):
-            try:
-                task_name = "report-section-{0}".format(section.section_id)
-                if attempt > 1:
-                    task_name += "-retry-{0}".format(attempt)
-                result = self.router.complete_text(task_name, messages, selection)
-                markdown = self._normalize_section_markdown(section, result.content)
-                issues = self._validate_section_markdown(section, markdown)
-                if issues:
-                    incomplete_artifact = self.tracker.write_text(
-                        "artifacts/report-failures/{0}-attempt-{1}.md".format(section.section_id, attempt),
-                        markdown,
-                    )
-                    self.tracker.log(
-                        "report-section",
-                        section.section_id,
-                        "Section report failed completeness validation",
-                        level="ERROR",
-                        data={"attempt": attempt, "title": section.title, "issues": issues},
-                        artifacts={"incomplete_report": incomplete_artifact},
-                    )
-                    if attempt < 2:
-                        messages = self._build_section_report_retry_messages(state, section, markdown, issues)
-                        continue
-                    raise ReportValidationError("Section report invalid: {0}".format("; ".join(issues)))
-                artifact = self.tracker.write_text(
-                    "artifacts/report-sections/{0}.md".format(section.section_id),
+        try:
+            # Step 1: Write initial draft
+            task_name = "report-section-{0}".format(section.section_id)
+            result = self.router.complete_text(task_name, messages, self.config.writer)
+            markdown = self._normalize_section_markdown(section, result.content)
+            issues = self._validate_section_markdown(section, markdown)
+            if issues:
+                incomplete_artifact = self.tracker.write_text(
+                    "artifacts/report-failures/{0}-initial.md".format(section.section_id),
                     markdown,
                 )
                 self.tracker.log(
                     "report-section",
                     section.section_id,
-                    "Section report generated",
-                    data={"model": result.model, "attempt": attempt, "title": section.title},
-                    artifacts={"section_report": artifact},
+                    "Initial draft failed validation, attempting retry",
+                    level="WARNING",
+                    data={"title": section.title, "issues": issues},
+                    artifacts={"incomplete_report": incomplete_artifact},
                 )
-                return markdown
-            except Exception as exc:
+                retry_messages = self._build_section_report_retry_messages(state, section, markdown, issues)
+                result = self.router.complete_text(task_name + "-retry", retry_messages, self.config.writer)
+                markdown = self._normalize_section_markdown(section, result.content)
+                retry_issues = self._validate_section_markdown(section, markdown)
+                if retry_issues:
+                    raise ValueError("Section still invalid after retry: {0}".format("; ".join(retry_issues)))
+
+            # Step 2: Critique the draft
+            try:
+                from .prompts import build_section_critique_messages, build_section_revise_messages
+                critique_messages = build_section_critique_messages(state, section, markdown)
+                _, critique_payload = self.router.complete_json(
+                    "critique-section-{0}".format(section.section_id),
+                    critique_messages,
+                    self.config.verifier,
+                )
+                critique_issues = critique_payload.get("issues", [])
+                quality_score = critique_payload.get("overall_quality", 10)
                 self.tracker.log(
-                    "report-section",
+                    "critique",
                     section.section_id,
-                    "Section report generation failed, using section draft fallback",
-                    level="ERROR",
-                    data={"attempt": attempt, "error": str(exc), "title": section.title},
+                    "Section critique completed",
+                    data={"quality_score": quality_score, "issue_count": len(critique_issues)},
                 )
-                break
+
+                # Step 3: Revise if quality is below threshold
+                if quality_score < 8 and critique_issues:
+                    revise_messages = build_section_revise_messages(state, section, markdown, critique_payload)
+                    revise_result = self.router.complete_text(
+                        "revise-section-{0}".format(section.section_id),
+                        revise_messages,
+                        self.config.writer,
+                    )
+                    revised = self._normalize_section_markdown(section, revise_result.content)
+                    revised_issues = self._validate_section_markdown(section, revised)
+                    if not revised_issues:
+                        markdown = revised
+                        self.tracker.log(
+                            "revise",
+                            section.section_id,
+                            "Section revised after critique",
+                            data={"quality_before": quality_score, "critique_issues": len(critique_issues)},
+                        )
+                    else:
+                        self.tracker.log(
+                            "revise",
+                            section.section_id,
+                            "Revised section failed validation, keeping original",
+                            level="WARNING",
+                            data={"issues": revised_issues},
+                        )
+            except Exception as critique_exc:
+                self.tracker.log(
+                    "critique",
+                    section.section_id,
+                    "Critique/revise cycle failed, keeping initial draft",
+                    level="WARNING",
+                    data={"error": str(critique_exc)},
+                )
+
+            # Save final result
+            artifact = self.tracker.write_text(
+                "artifacts/report-sections/{0}.md".format(section.section_id),
+                markdown,
+            )
+            self.tracker.log(
+                "report-section",
+                section.section_id,
+                "Section report generated",
+                data={"model": result.model, "title": section.title},
+                artifacts={"section_report": artifact},
+            )
+            return markdown
+        except Exception as exc:
+            self.tracker.log(
+                "report-section",
+                section.section_id,
+                "Section report generation failed, using section draft fallback",
+                level="ERROR",
+                data={"error": str(exc), "title": section.title},
+            )
         markdown = self._normalize_section_markdown(section, section.draft or self._section_draft(section))
         artifact = self.tracker.write_text(
             "artifacts/report-sections/{0}-fallback.md".format(section.section_id),
@@ -1308,12 +1780,8 @@ class DeepResearcher:
         assert self.router is not None
         assert self.tracker is not None
         messages = build_report_overview_messages(state)
-        selection = replace(
-            self.config.writer,
-            max_output_tokens=min(self.config.writer.max_output_tokens, 1200),
-        )
         try:
-            model, payload = self.router.complete_json("report-overview", messages, selection)
+            model, payload = self.router.complete_json("report-overview", messages, self.config.verifier)
             self.tracker.log(
                 "report",
                 "writer",
@@ -1467,19 +1935,21 @@ class DeepResearcher:
         return issues
 
     def _register_source(self, state: ResearchState, query: str, title: str, url: str, snippet: str) -> SourceRecord:
-        for source in state.sources.values():
-            if source.url == url:
-                return source
-        source_id = "S{0:03d}".format(len(state.sources) + 1)
-        source = SourceRecord(
-            source_id=source_id,
-            query=query,
-            title=title,
-            url=url,
-            snippet=snippet,
-        )
-        state.sources[source_id] = source
-        return source
+        with self._state_lock:
+            for source in state.sources.values():
+                if source.url == url:
+                    return source
+            source_id = "S{0:03d}".format(len(state.sources) + 1)
+            source = SourceRecord(
+                source_id=source_id,
+                query=query,
+                title=title,
+                url=url,
+                snippet=snippet,
+                credibility_score=_score_source_credibility(url, title),
+            )
+            state.sources[source_id] = source
+            return source
 
     def _load_workspace_documents(self, state: ResearchState) -> List[WorkspaceDocument]:
         assert self.tracker is not None
@@ -1560,6 +2030,7 @@ class DeepResearcher:
                 "title": source.title,
                 "url": source.url,
                 "excerpt": source.excerpt or source.snippet,
+                "source_type": "workspace",
             })
             self.tracker.log(
                 "workspace",
@@ -1583,26 +2054,27 @@ class DeepResearcher:
         executed_query: str,
         hits: List[object],
     ) -> None:
-        existing = {
-            (item.section_id, item.raw_query, _normalize_url(item.url)): item
-            for item in state.searched_results
-        }
-        for hit in hits:
-            key = (section_id, raw_query, _normalize_url(hit.url))
-            if key in existing:
-                record = existing[key]
-                record.executed_query = executed_query
-                record.title = hit.title
-                record.snippet = hit.snippet
-                continue
-            state.searched_results.append(SearchResultRecord(
-                section_id=section_id,
-                raw_query=raw_query,
-                executed_query=executed_query,
-                title=hit.title,
-                url=hit.url,
-                snippet=hit.snippet,
-            ))
+        with self._state_lock:
+            existing = {
+                (item.section_id, item.raw_query, _normalize_url(item.url)): item
+                for item in state.searched_results
+            }
+            for hit in hits:
+                key = (section_id, raw_query, _normalize_url(hit.url))
+                if key in existing:
+                    record = existing[key]
+                    record.executed_query = executed_query
+                    record.title = hit.title
+                    record.snippet = hit.snippet
+                    continue
+                state.searched_results.append(SearchResultRecord(
+                    section_id=section_id,
+                    raw_query=raw_query,
+                    executed_query=executed_query,
+                    title=hit.title,
+                    url=hit.url,
+                    snippet=hit.snippet,
+                ))
 
     def _mark_search_result_used(
         self,
@@ -1612,19 +2084,20 @@ class DeepResearcher:
         executed_query: str,
         source: SourceRecord,
     ) -> None:
-        normalized_url = _normalize_url(source.url)
-        for item in state.searched_results:
-            if item.section_id != section_id or item.raw_query != raw_query:
-                continue
-            if _normalize_url(item.url) != normalized_url:
-                continue
-            item.selected_for_evidence = True
-            item.source_id = source.source_id
-            item.executed_query = executed_query
-            if not item.title:
-                item.title = source.title
-            if not item.snippet:
-                item.snippet = source.snippet
+        with self._state_lock:
+            normalized_url = _normalize_url(source.url)
+            for item in state.searched_results:
+                if item.section_id != section_id or item.raw_query != raw_query:
+                    continue
+                if _normalize_url(item.url) != normalized_url:
+                    continue
+                item.selected_for_evidence = True
+                item.source_id = source.source_id
+                item.executed_query = executed_query
+                if not item.title:
+                    item.title = source.title
+                if not item.snippet:
+                    item.snippet = source.snippet
             return
 
     def _append_source_appendices(self, state: ResearchState, report_markdown: str) -> str:
