@@ -175,8 +175,46 @@
 
 用新的评估体系衡量改进，与 exp9 基线对比。
 
+## 工程审查后新增范围
+
+### 扩展 8: 并行章节研究（异步）
+- **当前**：各章节按顺序逐一研究
+- **目标**：同一轮次内独立章节并行研究，共享速率限制器
+- **约束**：HAI Proxy 限制 20 req/min/user，并行受限于速率而非并发
+- **策略**：搜索/抓取（网络 I/O）并行，LLM 调用通过现有 IntervalRateLimiter 串行
+- **工作量**：CC ~1 小时
+
+### 扩展 9: 链接追踪（引用链跟踪）
+- **当前**：仅使用搜索引擎返回的直接结果
+- **目标**：当高可信度源引用其他 URL（博客→论文，论文→论文），跟踪这些链接以丰富证据基础
+- **约束**：设置深度限制（最多 1 层跟踪），环检测避免无限循环
+- **依赖**：扩展 2（多策略搜索）+ 扩展 3（源可信度评分）
+- **工作量**：CC ~30 分钟
+
+## 工程审查关键决策
+
+1. **方法级扩展**而非控制流重写——现有架构已支持所有扩展作为方法级注入
+2. **prompts.py 保持单文件**——~650 行可管理，避免导入链变更
+3. **源可信度使用启发式评分**——域名白名单 + URL 模式 + 日期提取，不使用 LLM
+4. **完整测试覆盖**——新增 ~15 个测试用例（3 个新测试文件 + 2 个扩展文件）
+5. **evaluate.py 零测试是关键缺陷**——修改评分逻辑前必须先补测试
+
 ## 未纳入范围
 
 - 真正的浏览器 agent（Playwright/Puppeteer）——属于 "ocean"，不在本次 "lake" 范围
 - 多模型策略（便宜模型搜索、贵模型综合）——可作为后续优化
 - 完整 i18n 支持——当前中英文混合处理已够用
+- Prompt 拆分为多文件——单文件 650 行可管理
+- Prompt caching（已记录到 TODOS.md）——可独立实施
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | 7 proposals, 7 accepted, 0 deferred |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 2 issues, 0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+| Adversarial | `/codex review` | Independent 2nd opinion | 0 | — | — |
+
+- **UNRESOLVED:** 0
+- **VERDICT:** CEO + ENG CLEARED — ready to implement
