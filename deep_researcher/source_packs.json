@@ -4,9 +4,7 @@
     "description": "Prioritize official docs, blogs, reports, or release notes.",
     "applies_to_profiles": ["primary_source", "implementation_detail", "timeline_history"],
     "query_templates": [
-      "{subject} official docs",
-      "{subject} official blog",
-      "{subject} official report"
+      "{subject} {document_terms}"
     ],
     "source_hints": ["Official docs, blogs, reports, or release notes"],
     "allowed_domains": [],
@@ -19,8 +17,7 @@
     "description": "Prefer code repositories and source trees.",
     "applies_to_profiles": ["primary_source", "implementation_detail"],
     "query_templates": [
-      "{subject} github repo",
-      "{subject} source code"
+      "{subject} {query_hints} github repo"
     ],
     "source_hints": ["Code repositories and source trees"],
     "allowed_domains": ["github.com", "gitlab.com"],
@@ -33,8 +30,7 @@
     "description": "Prefer technical papers, whitepapers, and formal reports.",
     "applies_to_profiles": ["primary_source", "implementation_detail", "timeline_history"],
     "query_templates": [
-      "{subject} paper",
-      "{subject} technical report"
+      "{subject} {query_hints} paper"
     ],
     "source_hints": ["Technical papers, whitepapers, and formal reports"],
     "allowed_domains": [],
