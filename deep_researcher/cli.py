@@ -146,6 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--writer-models", help="Comma-separated writer model candidates.")
     parser.add_argument("--verifier-models", help="Comma-separated verifier model candidates.")
     parser.add_argument("--fast-models", help="Comma-separated fast utility model candidates.")
+    parser.add_argument("--quiet", action="store_true", help="Suppress progress output on stderr.")
     return parser
 
 
@@ -283,6 +284,8 @@ def main(argv: Optional[list] = None) -> int:
         config.use_mock_llm = True
     if args.mock_tools:
         config.use_mock_tools = True
+    if args.quiet:
+        config.verbose = False
     if args.semantic_mode:
         config.semantic_mode = args.semantic_mode
     planner_models = _parse_models(args.planner_models)

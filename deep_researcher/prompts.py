@@ -62,6 +62,7 @@ def build_planning_messages(
                 "- Long-running agent is allowed.\n"
                 "- Keep section boundaries clean for context control.\n"
                 "- Prefer search queries that can be executed on public web.\n"
+                "- IMPORTANT: Write all search queries in ENGLISH, even if the question is in another language. Use English keywords and proper nouns. Only include non-English terms when they are proper nouns with no English equivalent (e.g., company names, product names).\n"
                 "- Keep each search query narrow and retrieval-friendly: usually 3-6 keyword chunks, one intent per query.\n"
                 "- If the task depends on user-provided files or private materials, surface that explicitly in input_dependencies.\n"
                 "- Use source_requirements to name must-have evidence types, source classes, or documents.\n"
@@ -124,12 +125,14 @@ def build_section_research_messages(
                 "TASK_KIND: section_research\n"
                 "You are a research analyst for one report section.\n"
                 "Use only the provided evidence. Every finding must cite source_ids from the evidence packets.\n"
+                "CITATION DIVERSITY IS CRITICAL: Spread citations across as many DIFFERENT source_ids as possible. Do NOT over-rely on 1-2 sources even if they contain the most content. Evidence packets with source_type='web' represent independently retrieved web sources — these MUST be cited whenever they support a claim, even partially. Each reasoning_step and finding should cite at least one web source. Workspace sources are supplementary background — they should NOT be the primary citation for most claims.\n"
                 "Return explicit analyst-facing reasoning, not hidden chain-of-thought.\n"
                 "Use reasoning_steps to capture observation -> inference -> implication links that can appear in the final report.\n"
                 "Use counterpoints for tensions, alternative explanations, or places where evidence is still thin.\n"
                 "Keep the JSON compact and decision-useful.\n"
                 "Prefer at most 6 key_drivers, 5 reasoning_steps, 5 counterpoints, 8 open_questions, and 6 follow_up_queries.\n"
                 "IMPORTANT: Generate follow_up_queries aggressively. Think about what specific details, comparisons, data points, or mechanism explanations are still missing. Each follow_up_query should target a DIFFERENT source type or angle than existing evidence — prioritize official documentation, academic papers, engineering blog posts, and open-source repository documentation to maximize source diversity.\n"
+                "IMPORTANT: Write all follow_up_queries in ENGLISH. Use English keywords and proper nouns only.\n"
                 "If evidence is thin, reduce breadth instead of returning a long exhaustive list.\n"
                 "Return JSON only."
             ),
@@ -178,6 +181,9 @@ def build_gap_review_messages(
     schema = {
         "continue_research": True,
         "global_gaps": ["string"],
+        "section_sufficiency": [
+            {"section_id": "string", "score": "integer 1-5 (1=no evidence, 3=partial, 5=comprehensive)", "missing": ["string"]}
+        ],
         "focus_sections": [
             {"section_id": "string", "reason": "string", "follow_up_queries": ["string"]}
         ],
@@ -216,7 +222,15 @@ def build_gap_review_messages(
             "content": (
                 "TASK_KIND: gap_review\n"
                 "You are the supervisor deciding whether another research round is needed.\n"
+                "EVIDENCE SUFFICIENCY: For each section, provide a section_sufficiency score 1-5:\n"
+                "  1 = no meaningful evidence collected\n"
+                "  2 = some evidence but major gaps remain\n"
+                "  3 = partial coverage — key claims supported but important angles missing\n"
+                "  4 = good coverage — most must_cover topics addressed with diverse sources\n"
+                "  5 = comprehensive — all must_cover topics well-supported with diverse sources\n"
+                "Set continue_research=true if ANY section scores below 4 AND another round would meaningfully improve it.\n"
                 "Focus on source DIVERSITY: if a section only has evidence from 2-3 sources, generate follow_up_queries targeting different source types (official docs, academic papers, engineering blogs, open-source repos).\n"
+                "IMPORTANT: Write all follow_up_queries in ENGLISH. Use English keywords and proper nouns only.\n"
                 "Generate gap_tasks only when critical evidence is missing or source diversity is low. Do not generate tasks for minor polish or incremental improvements.\n"
                 "Convert missing evidence into explicit remediation tasks whenever possible.\n"
                 "Use action=workspace when first-party local files or curated workspace materials should resolve the gap.\n"
@@ -348,6 +362,31 @@ def build_section_report_messages(state: ResearchState, section: SectionState) -
             for finding in section.findings
         ],
     }
+    synthesis_context = ""
+    synthesis = state.cross_section_synthesis
+    if synthesis:
+        briefs = synthesis.get("section_briefs", [])
+        brief_text = ""
+        for b in briefs:
+            if b.get("section_id") == section.section_id and b.get("context_from_other_sections"):
+                brief_text = b["context_from_other_sections"]
+                break
+        contradictions = [
+            c for c in synthesis.get("contradictions", [])
+            if section.title in (c.get("section_a", ""), c.get("section_b", ""))
+        ]
+        themes = synthesis.get("cross_cutting_themes", [])
+        parts = []
+        if brief_text:
+            parts.append("CONTEXT FROM OTHER SECTIONS: {0}".format(brief_text))
+        if contradictions:
+            parts.append("CONTRADICTIONS TO ADDRESS: {0}".format(
+                json.dumps(contradictions, ensure_ascii=False)))
+        if themes:
+            parts.append("CROSS-CUTTING THEMES: {0}".format(", ".join(themes[:5])))
+        if parts:
+            synthesis_context = "\n".join(parts) + "\n"
+
     return [
         {
             "role": "system",
@@ -355,7 +394,7 @@ def build_section_report_messages(state: ResearchState, section: SectionState) -
                 "TASK_KIND: report_section_writer\n"
                 "Write exactly one markdown section for the final report.\n"
                 "Only use facts present in the section packet.\n"
-                "Add inline citations in the form [source:S001] after every factual claim.\n"
+                "Add inline citations in the form [source:S001] after every factual claim. Every sentence that states a fact, number, date, comparison, or attributed finding MUST have a citation. Aim for at least 2-3 citations per paragraph.\n"
                 "Start with a ## heading, then use ### subheadings only when there are clearly distinct subtopics (at most 1-2 subsections per section).\n"
                 "WRITING QUALITY REQUIREMENTS:\n"
                 "- Write 5-8 substantial paragraphs total for this section.\n"
@@ -366,7 +405,8 @@ def build_section_report_messages(state: ResearchState, section: SectionState) -
                 "- When evidence supports it, include specific numbers, dates, percentages, and concrete examples.\n"
                 "- Connect this section's analysis to the broader research question — explain why this matters.\n"
                 "- State counterpoints and limitations directly rather than pretending certainty.\n"
-                "- Cite as many DIFFERENT sources as possible. Avoid over-relying on 2-3 sources — spread citations across all available evidence packets to maximize source diversity.\n"
+                "- CITATION DIVERSITY IS THE #1 PRIORITY: You MUST cite as many DIFFERENT source_ids as possible. If the section packet contains findings citing S003, S005, S008 etc., you MUST use those citations in your prose — do NOT collapse all citations to S001/S002. The report quality is measured primarily by the number of unique sources cited.\n"
+                "- If cross-section context is provided, reference connections to other sections where relevant and avoid contradicting established findings.\n"
                 "End every paragraph cleanly with punctuation or a citation bracket.\n"
                 "Do not write any executive summary, conclusion, appendix, or sources list."
             ),
@@ -377,11 +417,13 @@ def build_section_report_messages(state: ResearchState, section: SectionState) -
                 "QUESTION: {0}\n"
                 "OBJECTIVE: {1}\n"
                 "SECTION_TITLE: {2}\n"
-                "SECTION_PACKET:\n{3}"
+                "{3}"
+                "SECTION_PACKET:\n{4}"
             ).format(
                 state.question,
                 state.objective,
                 section.title,
+                synthesis_context,
                 _json_block(section_packet),
             ),
         },
@@ -426,6 +468,167 @@ def build_report_overview_messages(state: ResearchState) -> List[Dict[str, str]]
                 state.question,
                 state.objective,
                 _json_block({"sections": overview_packets}),
+                _json_block(schema),
+            ),
+        },
+    ]
+
+
+def build_section_critique_messages(
+    state: ResearchState,
+    section: SectionState,
+    section_markdown: str,
+) -> List[Dict[str, str]]:
+    schema = {
+        "overall_quality": "integer 1-10",
+        "issues": [
+            {
+                "type": "unsupported_claim|logic_gap|missing_evidence|weak_analysis|structural",
+                "description": "string",
+                "suggestion": "string",
+            }
+        ],
+        "missing_perspectives": ["string"],
+        "revision_priorities": ["string"],
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "TASK_KIND: section_critic\n"
+                "You are a rigorous research editor reviewing a section draft.\n"
+                "Evaluate the section for: analytical depth, evidence support, logical coherence, "
+                "source diversity, and completeness relative to the section goal.\n"
+                "Be specific and actionable in your critique.\n"
+                "Return JSON only."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "QUESTION: {0}\n"
+                "SECTION_TITLE: {1}\n"
+                "SECTION_GOAL: {2}\n"
+                "SECTION_MARKDOWN:\n{3}\n"
+                "JSON_SCHEMA:\n{4}"
+            ).format(
+                state.question,
+                section.title,
+                section.goal,
+                section_markdown,
+                _json_block(schema),
+            ),
+        },
+    ]
+
+
+def build_section_revise_messages(
+    state: ResearchState,
+    section: SectionState,
+    section_markdown: str,
+    critique: Dict,
+) -> List[Dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "TASK_KIND: section_reviser\n"
+                "You are revising a research report section based on editorial critique.\n"
+                "Address the critique issues while preserving the section's evidence and citations.\n"
+                "Maintain the same ## heading and markdown format.\n"
+                "Improve analytical depth where flagged. Add missing perspectives if evidence supports them.\n"
+                "Do not add new claims without evidence. Keep all existing [source:SXXX] citations.\n"
+                "Output the revised section markdown only. No preamble, no explanation."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "ORIGINAL SECTION:\n{0}\n\n"
+                "CRITIQUE:\n{1}\n\n"
+                "Revise the section addressing the critique. Output markdown only."
+            ).format(
+                section_markdown,
+                _json_block(critique),
+            ),
+        },
+    ]
+
+
+def build_cross_section_synthesis_messages(state: ResearchState) -> List[Dict[str, str]]:
+    schema = {
+        "contradictions": [
+            {
+                "section_a": "string",
+                "section_b": "string",
+                "claim_a": "string",
+                "claim_b": "string",
+                "resolution_hint": "string",
+            }
+        ],
+        "overlaps": [
+            {
+                "sections": ["string"],
+                "topic": "string",
+                "recommendation": "consolidate_in_first|keep_both|merge",
+            }
+        ],
+        "cross_cutting_themes": ["string"],
+        "section_briefs": [
+            {
+                "section_id": "string",
+                "context_from_other_sections": "string",
+            }
+        ],
+    }
+
+    section_summaries = []
+    for section in state.sections:
+        findings_text = "; ".join(f.claim for f in section.findings[:8])
+        source_count = len(section.source_ids)
+        section_summaries.append(
+            "SECTION: {0} (id={1})\n"
+            "  GOAL: {2}\n"
+            "  THESIS: {3}\n"
+            "  KEY FINDINGS: {4}\n"
+            "  SOURCES: {5} sources\n"
+            "  EVIDENCE SUFFICIENCY: {6}/5".format(
+                section.title,
+                section.section_id,
+                section.goal,
+                section.thesis or "(not yet established)",
+                findings_text or "(none recorded)",
+                source_count,
+                section.evidence_sufficiency,
+            )
+        )
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                "TASK_KIND: cross_section_synthesis\n"
+                "You are a research editor reviewing all sections of a research report together.\n"
+                "Your job is to identify:\n"
+                "1. CONTRADICTIONS: Where two sections make conflicting claims. Provide a resolution hint.\n"
+                "2. OVERLAPS: Where multiple sections cover the same topic redundantly.\n"
+                "3. CROSS-CUTTING THEMES: Insights that emerge only when looking across sections.\n"
+                "4. SECTION BRIEFS: For each section, provide context from other sections that the writer "
+                "should know about to avoid contradictions and leverage cross-references.\n"
+                "Be concise and actionable. Return JSON only."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "QUESTION: {0}\n"
+                "OBJECTIVE: {1}\n\n"
+                "{2}\n\n"
+                "JSON_SCHEMA:\n{3}"
+            ).format(
+                state.question,
+                state.objective,
+                "\n\n".join(section_summaries),
                 _json_block(schema),
             ),
         },

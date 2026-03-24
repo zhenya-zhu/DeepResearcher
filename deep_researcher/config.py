@@ -100,6 +100,7 @@ class AppConfig:
     workspace_sources: List[Path] = field(default_factory=list)
     use_mock_llm: bool = False
     use_mock_tools: bool = False
+    verbose: bool = True
     max_workspace_documents: int = 16
     max_workspace_sources_per_section: int = 3
     max_chars_per_workspace_document: int = 120000
@@ -122,7 +123,7 @@ class AppConfig:
     verifier: ModelSelection = field(default_factory=lambda: ModelSelection(
         candidates=["anthropic--claude-4.6-sonnet", "gpt-5", "sonar-pro"],
         temperature=0.0,
-        max_output_tokens=1800,
+        max_output_tokens=8000,
     ))
     fast: ModelSelection = field(default_factory=lambda: ModelSelection(
         candidates=["anthropic--claude-4.5-haiku", "gpt-5-mini", "sonar"],
@@ -215,7 +216,7 @@ class AppConfig:
             temperature=_env_float("DEEP_RESEARCHER_VERIFIER_TEMPERATURE", 0.0),
             max_output_tokens=_env_int_alias(
                 ["DEEP_RESEARCHER_VERIFIER_MAX_OUTPUT_TOKENS", "DEEP_RESEARCHER_VERIFIER_MAX_TOKENS"],
-                1800,
+                8000,
             ),
         )
         config.fast = ModelSelection(
