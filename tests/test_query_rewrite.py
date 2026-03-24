@@ -52,7 +52,31 @@ class QueryRewriteTest(unittest.TestCase):
     def test_extract_subject_strips_request_prefixes(self) -> None:
         subject = _extract_subject("给我研究一下 Deep Research 的进展和原理，重点关注 OpenAI、Gemini、Claude")
 
-        self.assertEqual(subject, "Deep Research 的进展和原理")
+        self.assertEqual(subject, "Deep Research 进展和原理")
+
+    def test_compact_query_drops_chinese_filler_in_mixed_query(self) -> None:
+        compact = _compact_query("Deep Research的进展和原理 launch blog product")
+        self.assertIn("Deep Research", compact)
+        self.assertIn("launch", compact)
+        self.assertNotIn("进展", compact)
+        self.assertNotIn("原理", compact)
+
+    def test_compact_query_keeps_short_cjk_proper_nouns(self) -> None:
+        compact = _compact_query("FICC宏观框架 fixed income currency commodity")
+        self.assertIn("FICC", compact)
+        self.assertIn("fixed", compact)
+
+    def test_compact_query_pure_english_unchanged(self) -> None:
+        compact = _compact_query("coal chemical petroleum alternative production cost")
+        self.assertIn("coal", compact)
+        self.assertIn("petroleum", compact)
+
+    def test_compact_query_filters_generic_chinese_chunks(self) -> None:
+        compact = _compact_query("Deep Research 技术 分析 原理 architecture design")
+        self.assertNotIn("技术", compact)
+        self.assertNotIn("分析", compact)
+        self.assertNotIn("原理", compact)
+        self.assertIn("architecture", compact)
 
 
 if __name__ == "__main__":
