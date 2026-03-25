@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from urllib.parse import urlparse, urlsplit
 
-from .config import AppConfig
+from .config import AppConfig, ModelSelection
 from .llm import AnthropicCompatibleBackend, MockBackend, ModelRouter, MultiProviderBackend, OpenAICompatibleBackend
 from .model_capabilities import load_model_capability_registry
 from .prompts import (
@@ -1352,13 +1352,30 @@ class DeepResearcher:
                     self.config.researcher,
                 )
             except RuntimeError as json_exc:
-                result = self.router.complete_text(task_label + "-sonar-retry", messages, self.config.researcher)
-                if is_sonar_model(result.model):
-                    payload = adapt_sonar_response(result.content)
-                    model = result.model
-                    self.tracker.log("section", section.section_id, "Used sonar adapter for non-JSON response", data={"model": model})
-                else:
+                # Only retry with Sonar models — non-Sonar models should produce valid JSON
+                sonar_candidates = [c for c in self.config.researcher.candidates if is_sonar_model(c)]
+                if not sonar_candidates:
                     raise json_exc
+                sonar_selection = ModelSelection(
+                    candidates=sonar_candidates,
+                    temperature=self.config.researcher.temperature,
+                    max_output_tokens=self.config.researcher.max_output_tokens,
+                )
+                result = self.router.complete_text(task_label + "-sonar-retry", messages, sonar_selection)
+                payload = adapt_sonar_response(result.content)
+                model = result.model
+                # Register Sonar URLs as real sources and remap sonar-ref-N to S-IDs
+                sonar_urls = payload.pop("_sonar_urls", [])
+                ref_to_sid: Dict[str, str] = {}
+                for url in sonar_urls:
+                    source = self._register_source(state, "sonar:" + section.section_id, url.split("/")[-1][:80], url, "")
+                    # Map by order: sonar-ref-1 → first URL, sonar-ref-2 → second, etc.
+                    ref_key = "sonar-ref-{0}".format(len(ref_to_sid) + 1)
+                    ref_to_sid[ref_key] = source.source_id
+                if ref_to_sid:
+                    for finding in payload.get("findings", []):
+                        finding["source_ids"] = [ref_to_sid.get(sid, sid) for sid in finding.get("source_ids", [])]
+                self.tracker.log("section", section.section_id, "Used sonar adapter for non-JSON response", data={"model": model, "urls_registered": len(sonar_urls)})
             section.thesis = str(payload.get("thesis", section.thesis or section.summary)).strip()
             section.key_drivers = _trim_list([str(item) for item in payload.get("key_drivers", [])], 6)
             section.reasoning_steps = self._merge_reasoning_steps(

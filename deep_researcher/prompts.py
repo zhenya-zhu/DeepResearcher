@@ -521,7 +521,7 @@ def build_section_critique_messages(
         "overall_quality": "integer 1-10",
         "issues": [
             {
-                "type": "unsupported_claim|logic_gap|missing_evidence|weak_analysis|structural",
+                "type": "unsupported_claim|logic_gap|missing_evidence|weak_analysis|structural|meta_commentary|false_confidence",
                 "description": "string",
                 "suggestion": "string",
             }

@@ -7,7 +7,7 @@ plain prose. This adapter handles all three cases.
 """
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from deep_researcher.json_utils import extract_first_json
 

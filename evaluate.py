@@ -170,10 +170,11 @@ def llm_judge_score(report_text: str, reference_text: str) -> dict:
             max_tokens=1000,
         )
         content = response.choices[0].message.content
-        # Extract JSON
-        json_match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
+        # Extract JSON (handles nested braces in overall_notes)
+        from deep_researcher.json_utils import extract_first_json
+        parsed = extract_first_json(content)
+        if isinstance(parsed, dict):
+            return parsed
     except Exception as e:
         print(f"LLM judge error: {e}", file=sys.stderr)
 
