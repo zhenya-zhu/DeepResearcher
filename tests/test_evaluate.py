@@ -123,11 +123,31 @@ class CompositeScoreTest(unittest.TestCase):
         llm = {"structure": 8, "depth": 7, "evidence": 9, "coherence": 8,
                "tables": 6, "paragraph_quality": 7, "summary_conclusion": 8, "completeness": 7}
         score = compute_composite_score(90.0, llm, 80.0)
-        # llm_total = 60/80 = 0.75 * 60 = 45
+        # llm_total = 60/80 = 0.75 * 60 = 45 (8 present keys, denom = 80)
         # structural = 90 * 0.25 = 22.5
         # semantic = 80 * 0.15 = 12
         # total = 79.5
         self.assertEqual(score, 79.5)
+
+    def test_nine_dimension_composite(self):
+        """New 9-dimension scores use dynamic denominator."""
+        llm = {"structure": 8, "depth": 7, "evidence": 9, "coherence": 8,
+               "tables": 6, "paragraph_quality": 7, "summary_conclusion": 8,
+               "completeness": 7, "honesty": 8}
+        score = compute_composite_score(90.0, llm, 80.0)
+        # llm_total = 68/90 = 0.7556 * 60 = 45.33
+        # structural = 90 * 0.25 = 22.5
+        # semantic = 80 * 0.15 = 12
+        # total = 79.8
+        self.assertAlmostEqual(score, 79.8, places=1)
+
+    def test_eight_dimension_backward_compat(self):
+        """Old 8-dimension results should produce identical scores to before."""
+        llm_8 = {"structure": 8, "depth": 7, "evidence": 9, "coherence": 8,
+                 "tables": 6, "paragraph_quality": 7, "summary_conclusion": 8, "completeness": 7}
+        score_8 = compute_composite_score(90.0, llm_8, 80.0)
+        # 8 present keys -> denom = 80. Same as before.
+        self.assertEqual(score_8, 79.5)
 
 
 if __name__ == "__main__":

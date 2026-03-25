@@ -116,6 +116,7 @@ Score each dimension from 0-10, where 10 = reference quality or better.
 6. **Paragraph Quality** (0-10): Are paragraphs substantial (3-5 sentences each), well-developed, with clear topic sentences? Or are they thin/bullet-like?
 7. **Executive Summary & Conclusion** (0-10): Is there a rich executive summary and conclusion that synthesizes across sections?
 8. **Completeness** (0-10): Does the report address all aspects of the question? Are there obvious gaps?
+9. **Intellectual Honesty** (0-10): Does confidence match evidence? Are well-sourced claims stated confidently? Are inferences distinguished from direct evidence? Does the report avoid both false confidence (strong claims without citations, speculation presented as fact) AND excessive hedging (epistemic disclaimers, research-process narration)?
 
 ## Output Format
 
@@ -129,6 +130,7 @@ Return JSON only:
   "paragraph_quality": <int>,
   "summary_conclusion": <int>,
   "completeness": <int>,
+  "honesty": <int>,
   "overall_notes": "<brief explanation of biggest gaps vs reference>"
 }
 """
@@ -202,10 +204,14 @@ def compute_composite_score(structural_score: float, llm_scores: dict, semantic_
         return structural_score  # fallback to structural only
 
     # LLM dimensions weighted equally, total weight = 60
+    # Dynamic denominator: supports both 8-dim (legacy) and 9-dim (with honesty) results
     llm_keys = ["structure", "depth", "evidence", "coherence", "tables",
-                 "paragraph_quality", "summary_conclusion", "completeness"]
-    llm_total = sum(llm_scores.get(k, 0) for k in llm_keys)
-    llm_normalized = (llm_total / (len(llm_keys) * 10)) * 60  # 0-60
+                 "paragraph_quality", "summary_conclusion", "completeness", "honesty"]
+    present_keys = [k for k in llm_keys if k in llm_scores]
+    if not present_keys:
+        present_keys = llm_keys[:8]  # fallback to 8-dim
+    llm_total = sum(llm_scores.get(k, 0) for k in present_keys)
+    llm_normalized = (llm_total / (len(present_keys) * 10)) * 60  # 0-60
 
     # Structural = 25
     structural_normalized = structural_score * 0.25
