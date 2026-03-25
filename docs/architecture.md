@@ -271,7 +271,7 @@ DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher --mode depth --qu
   > **为什么 Executive Summary 由单独的 LLM 调用生成？** 摘要需要从全局视角概括所有章节的核心发现，让读者不看正文也能抓住要点。如果在写各章节时顺便写摘要，LLM 只能看到当前章节的上下文，无法做出跨章节的提炼。
 
 **组装**：[`_assemble_report()`](../deep_researcher/workflow.py#L1700)
-- 顺序拼接：标题 → Executive Summary → 各章节 Markdown → Conclusion → Remaining Gaps
+- 顺序拼接：标题 → Executive Summary → 各章节 Markdown → Conclusion
 
 **来源附录**：[`_append_source_appendices()`](../deep_researcher/workflow.py#L2049)
 - 正则提取报告中所有 `[source:S001]` 引用（[workflow.py:2051](../deep_researcher/workflow.py#L2051)）
@@ -315,12 +315,14 @@ DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher --mode depth --qu
 | 角色 | 用途 | 默认模型候选 | 温度 |
 |------|------|-------------|------|
 | Planner | 设计研究计划 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.2 |
-| Researcher | 分析证据、提炼论点 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.2 |
+| Researcher | 分析证据、提炼论点 | **sonar-pro**, claude-4.6-sonnet, gpt-5 | 0.2 |
 | Writer | 撰写报告章节 | claude-4.6-sonnet, gpt-5, opus | 0.2 |
 | Verifier | 缺口审查、批评、审计 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.0 |
 | Fast | 轻量任务 | claude-4.5-haiku, gpt-5-mini, sonar | 0.1 |
 
 通过 HAI Proxy (`localhost:6655/litellm/v1`) 调用，带速率限制（16 RPM）。
+
+> **Researcher 角色说明：** Researcher 优先使用 sonar-pro（Perplexity 的搜索增强 LLM），因为它返回带内联引用的响应，天然适合研究任务。当 sonar-pro 返回非 JSON 格式时，通过 `sonar_adapter.py` 将自然语言响应映射为标准研究 JSON schema，并将 Sonar 引用的 URL 注册为真实的 `SourceRecord`。
 
 ## 核心源文件
 
@@ -340,7 +342,8 @@ DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher --mode depth --qu
 | `deep_researcher/tracing.py` | 日志、检查点与 HTML Trace 生成 | ~250+ |
 | `deep_researcher/workspace_sources.py` | 本地文件发现与证据选取 | ~250+ |
 | `deep_researcher/json_utils.py` | JSON 提取与修复工具 | ~96 |
-| `evaluate.py` | 评估框架 | ~400+ |
+| `deep_researcher/sonar_adapter.py` | Sonar-pro 非 JSON 响应适配器 | ~130 |
+| `evaluate.py` | 评估框架（结构指标 + LLM 9 维评分） | ~400+ |
 
 ## 状态管理与检查点
 
@@ -418,9 +421,6 @@ runs/{run_id}/
 - 结论 1
 - 结论 2
 
-## Remaining Gaps
-- 未解决问题 1
-
 ## Sources
 - S001: [标题](URL)
 - S002: [标题](URL)
@@ -439,6 +439,9 @@ runs/{run_id}/
 - Paragraph Quality (0-10)
 - Executive Summary & Conclusion (0-10)
 - Completeness (0-10)
+- Intellectual Honesty (0-10) — 置信度是否匹配证据强度，有证据支撑的论断是否自信陈述，推断是否与直接证据区分
+
+> 评估使用动态分母：支持 8 维（旧版）和 9 维（含 Intellectual Honesty）结果，向后兼容。
 
 ## 环境变量配置
 
@@ -457,7 +460,8 @@ runs/{run_id}/
 
 - **迭代加深**：通过 gap detection 发现证据不足 → 生成新查询 → 再次搜索
 - **引用多样性**：Prompt 强制要求分散引用，避免过度依赖少数来源
-- **多层质控**：Critique/Revise 循环 + 全局 Audit
+- **多层质控**：Critique/Revise 循环 + 全局 Audit + Critique 双标志（meta-commentary 和 false confidence）
+- **校准置信度**：Prompt 引导 Writer 在有证据支撑时自信陈述、推断时适度保留，避免两个极端（虚假自信和过度对冲）
 - **容错回退**：规划失败用通用 4 章节模板、研究失败用启发式发现、写作失败保留草稿
 - **并行处理**：章节研究通过 ThreadPoolExecutor 并行（最多 3 workers）
 - **多语言查询归一化**：中文停用词去除、CJK/Latin 分词
