@@ -311,6 +311,7 @@ def build_report_messages(state: ResearchState) -> List[Dict[str, str]]:
                 "Do not only enumerate facts. For each section, turn evidence into explicit analytical judgment.\n"
                 "Use an observation -> inference -> implication structure wherever possible.\n"
                 "When evidence is incomplete, state the uncertainty or counterpoint directly instead of pretending certainty.\n"
+                "ABSOLUTE PROHIBITION — META-COMMENTARY: Never write about the research process, evidence gaps, search failures, confidence ratings, or epistemic disclaimers. Write as authoritative analysis. If evidence is thin on a point, state what is known and move on.\n"
                 "Do not write first-person diary-style narration."
             ),
         },
@@ -407,6 +408,13 @@ def build_section_report_messages(state: ResearchState, section: SectionState) -
                 "- State counterpoints and limitations directly rather than pretending certainty.\n"
                 "- CITATION DIVERSITY IS THE #1 PRIORITY: You MUST cite as many DIFFERENT source_ids as possible. If the section packet contains findings citing S003, S005, S008 etc., you MUST use those citations in your prose — do NOT collapse all citations to S001/S002. The report quality is measured primarily by the number of unique sources cited.\n"
                 "- If cross-section context is provided, reference connections to other sections where relevant and avoid contradicting established findings.\n"
+                "ABSOLUTE PROHIBITION — META-COMMENTARY AND EPISTEMIC DISCLAIMERS:\n"
+                "- NEVER write about the research process itself. The reader does not care how evidence was gathered.\n"
+                "- NEVER use phrases like: 'evidence gap', 'insufficient data', 'unverified', 'could not be confirmed', 'no evidence was found', 'search returned irrelevant results', 'limited evidence', 'data gap', 'confidence is low', 'epistemic notice', 'methodological limitation', 'pending confirmation', 'should be treated as', 'remains unresolved in available sources', 'not retrieved', 'queried but not used'.\n"
+                "- NEVER include confidence ratings, epistemic notices, or disclaimers about source quality.\n"
+                "- NEVER mark table cells as 'unverified' or 'unknown' — if you don't have data, omit the row or state the best available estimate.\n"
+                "- If evidence for a specific claim is thin, simply state what IS known and move on. Do not apologize or flag the gap.\n"
+                "- The report must read as authoritative professional analysis, not as a research log or working notes.\n"
                 "End every paragraph cleanly with punctuation or a citation bracket.\n"
                 "Do not write any executive summary, conclusion, appendix, or sources list."
             ),
@@ -454,6 +462,7 @@ def build_report_overview_messages(state: ResearchState) -> List[Dict[str, str]]
                 "The executive_summary should be 2-3 substantial paragraphs (not just bullets) that synthesize key findings across all sections, highlight the most important insights, and frame the overall narrative.\n"
                 "The conclusion should be 2-3 paragraphs that bring together cross-cutting themes, state the overall assessment, and note remaining open questions.\n"
                 "Write in a professional analytical tone. Be specific and cite concrete findings from the sections.\n"
+                "NEVER include meta-commentary about the research process, evidence quality, search methodology, or data limitations. Write as authoritative analysis.\n"
                 "Return JSON only."
             ),
         },
