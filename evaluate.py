@@ -149,14 +149,14 @@ def llm_judge_score(report_text: str, reference_text: str) -> dict:
 
     client = openai.OpenAI(api_key=api_key, base_url=base_url)
 
-    # Truncate texts to fit context
-    max_chars = 30000
+    # Truncate texts to fit context (Opus 4.6 supports 1M tokens)
+    max_chars = 120000
     report_trunc = report_text[:max_chars]
     reference_trunc = reference_text[:max_chars]
 
     try:
         response = client.chat.completions.create(
-            model="anthropic--claude-4.6-sonnet",
+            model="anthropic--claude-4.6-opus",
             messages=[
                 {"role": "system", "content": JUDGE_PROMPT},
                 {"role": "user", "content": (
