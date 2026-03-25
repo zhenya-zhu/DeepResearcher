@@ -80,6 +80,12 @@ def build_depth_thinking_messages(
                 "reason": "string",
             }
         ],
+        "needs_computation": [
+            {
+                "code": "Python code that prints results",
+                "description": "string",
+            }
+        ],
     }
     dep_block = ""
     if dependency_context:
@@ -101,6 +107,8 @@ def build_depth_thinking_messages(
                 "If you need an external fact to continue reasoning, include it in needs_search.\n"
                 "Each reasoning step should advance the argument. Avoid repetition.\n"
                 "Assign a confidence score (0.0-1.0) to each step and to the overall conclusion.\n"
+                "If you need to verify a numerical calculation, include it in needs_computation. "
+                "Sandboxed Python with math/statistics/decimal/fractions available. Always print() results.\n"
                 "Return JSON only. No markdown fences."
             ),
         },
@@ -179,6 +187,7 @@ def build_depth_revision_messages(
     sub_problem: SubProblem,
     original_steps: List[Dict[str, str]],
     verification_feedback: Dict,
+    urgency: str = "",
 ) -> List[Dict[str, str]]:
     schema = {
         "steps": [
@@ -197,6 +206,12 @@ def build_depth_revision_messages(
                 "reason": "string",
             }
         ],
+        "needs_computation": [
+            {
+                "code": "Python code that prints results",
+                "description": "string",
+            }
+        ],
     }
     return [
         {
@@ -211,6 +226,7 @@ def build_depth_revision_messages(
                 "- Propose an entirely different approach if the original was fundamentally flawed\n"
                 "- Request additional evidence via needs_search if needed\n"
                 "Return JSON only. No markdown fences."
+                + ("\n" + urgency if urgency else "")
             ),
         },
         {
@@ -410,6 +426,45 @@ def build_depth_audit_messages(state: DepthState) -> List[Dict[str, str]]:
                 state.question,
                 json.dumps(sub_problem_titles, ensure_ascii=False),
                 state.report_markdown,
+                _json_block(schema),
+            ),
+        },
+    ]
+
+
+def build_depth_adversarial_verification_messages(
+    question: str,
+    sub_problem: SubProblem,
+) -> List[Dict[str, str]]:
+    schema = {
+        "independent_reasoning": "string",
+        "agrees_with_conclusion": True,
+        "disagreement_reason": "string (empty if agrees)",
+        "confidence": 0.0,
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "TASK_KIND: depth_adversarial_verify\n"
+                "You are an independent verifier. You receive ONLY a conclusion (not the reasoning chain).\n"
+                "Independently derive whether the conclusion is correct for the given sub-problem.\n"
+                "Do NOT assume the original reasoning was correct. Work from first principles.\n"
+                "If you disagree, explain specifically why in disagreement_reason.\n"
+                "Return JSON only. No markdown fences."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "QUESTION: {0}\n"
+                "SUB_PROBLEM: {1}\n"
+                "CONCLUSION_TO_VERIFY: {2}\n"
+                "JSON_SCHEMA:\n{3}"
+            ).format(
+                question,
+                sub_problem.description,
+                sub_problem.conclusion,
                 _json_block(schema),
             ),
         },
