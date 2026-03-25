@@ -83,6 +83,7 @@ class AppConfig:
     api_key: str = ""
     proxy_url: str = "http://proxy.sin.sap.corp:8080"
     network_mode: str = "auto"
+    mode: str = "breadth"  # "breadth" | "depth"
     semantic_mode: str = "hybrid"
     timeout_seconds: int = 120
     rpm_limit: int = 16
@@ -105,6 +106,11 @@ class AppConfig:
     max_workspace_sources_per_section: int = 3
     max_chars_per_workspace_document: int = 120000
     max_chars_per_workspace_excerpt: int = 2600
+    max_depth_iterations: int = 5
+    max_depth_revisions: int = 3
+    max_sub_problems: int = 6
+    depth_confidence_threshold: float = 0.7
+    max_on_demand_searches: int = 3
     planner: ModelSelection = field(default_factory=lambda: ModelSelection(
         candidates=["anthropic--claude-4.6-sonnet", "gpt-5", "sonar-pro"],
         temperature=0.2,
@@ -130,6 +136,11 @@ class AppConfig:
         temperature=0.1,
         max_output_tokens=1000,
     ))
+    thinker: ModelSelection = field(default_factory=lambda: ModelSelection(
+        candidates=["anthropic--claude-4.6-opus", "anthropic--claude-4.6-sonnet", "gpt-5"],
+        temperature=0.3,
+        max_output_tokens=16000,
+    ))
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -141,6 +152,7 @@ class AppConfig:
             api_key=api_key,
             proxy_url=os.getenv("DEEP_RESEARCHER_PROXY_URL", "http://proxy.sin.sap.corp:8080"),
             network_mode=_env_choice("DEEP_RESEARCHER_NETWORK_MODE", "auto", ["auto", "proxy", "direct"]),
+            mode=_env_choice("DEEP_RESEARCHER_MODE", "breadth", ["breadth", "depth"]),
             semantic_mode=_env_choice("DEEP_RESEARCHER_SEMANTIC_MODE", "hybrid", ["hybrid", "native"]),
             timeout_seconds=_env_int("DEEP_RESEARCHER_TIMEOUT_SECONDS", 120),
             rpm_limit=_env_int("DEEP_RESEARCHER_RPM_LIMIT", 16),
@@ -174,6 +186,11 @@ class AppConfig:
             max_workspace_sources_per_section=_env_int("DEEP_RESEARCHER_MAX_WORKSPACE_SOURCES_PER_SECTION", 3),
             max_chars_per_workspace_document=_env_int("DEEP_RESEARCHER_MAX_CHARS_PER_WORKSPACE_DOCUMENT", 120000),
             max_chars_per_workspace_excerpt=_env_int("DEEP_RESEARCHER_MAX_CHARS_PER_WORKSPACE_EXCERPT", 2600),
+            max_depth_iterations=_env_int("DEEP_RESEARCHER_MAX_DEPTH_ITERATIONS", 5),
+            max_depth_revisions=_env_int("DEEP_RESEARCHER_MAX_DEPTH_REVISIONS", 3),
+            max_sub_problems=_env_int("DEEP_RESEARCHER_MAX_SUB_PROBLEMS", 6),
+            depth_confidence_threshold=_env_float("DEEP_RESEARCHER_DEPTH_CONFIDENCE_THRESHOLD", 0.7),
+            max_on_demand_searches=_env_int("DEEP_RESEARCHER_MAX_ON_DEMAND_SEARCHES", 3),
         )
         config.planner = ModelSelection(
             candidates=_split_models(
@@ -228,6 +245,17 @@ class AppConfig:
             max_output_tokens=_env_int_alias(
                 ["DEEP_RESEARCHER_FAST_MAX_OUTPUT_TOKENS", "DEEP_RESEARCHER_FAST_MAX_TOKENS"],
                 1000,
+            ),
+        )
+        config.thinker = ModelSelection(
+            candidates=_split_models(
+                os.getenv("DEEP_RESEARCHER_THINKER_MODELS"),
+                ["anthropic--claude-4.6-opus", "anthropic--claude-4.6-sonnet", "gpt-5"],
+            ),
+            temperature=_env_float("DEEP_RESEARCHER_THINKER_TEMPERATURE", 0.3),
+            max_output_tokens=_env_int_alias(
+                ["DEEP_RESEARCHER_THINKER_MAX_OUTPUT_TOKENS", "DEEP_RESEARCHER_THINKER_MAX_TOKENS"],
+                16000,
             ),
         )
         return config
