@@ -1781,10 +1781,6 @@ class DeepResearcher:
             lines.extend(["## Conclusion", ""])
             lines.extend("- {0}".format(item) for item in conclusion)
             lines.append("")
-        if state.global_gaps:
-            lines.extend(["## Remaining Gaps", ""])
-            lines.extend("- {0}".format(item) for item in state.global_gaps)
-            lines.append("")
         return "\n".join(lines).rstrip() + "\n"
 
     def _generate_report_overview(self, state: ResearchState) -> Dict[str, List[str]]:
@@ -1830,8 +1826,6 @@ class DeepResearcher:
             final_thesis = state.sections[-1].thesis or state.sections[-1].summary
             if final_thesis:
                 conclusion.append(final_thesis)
-        if state.global_gaps:
-            conclusion.append("当前结论仍受若干证据缺口约束，需结合 Remaining Gaps 一并解读。")
         return {
             "title": title,
             "executive_summary": _trim_list(executive_summary, 5),
@@ -2286,11 +2280,4 @@ class DeepResearcher:
         for section in state.sections:
             lines.append(section.draft or self._section_draft(section))
             lines.append("")
-        if state.global_gaps:
-            lines.extend([
-                "## Remaining Gaps",
-                "",
-                *["- {0}".format(item) for item in state.global_gaps],
-                "",
-            ])
         return "\n".join(lines).strip() + "\n"
