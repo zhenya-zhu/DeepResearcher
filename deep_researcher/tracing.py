@@ -20,6 +20,9 @@ _STAGE_ICONS = {
     "critique": "\U0001f9d0",   # 🧐
     "report": "\U0001f4dd",     # 📝
     "audit": "\U0001f50e",      # 🔎
+    "thinking": "\U0001f9e0",   # 🧠
+    "search": "\U0001f50d",     # 🔍
+    "fetch": "\U0001f4e5",      # 📥
 }
 
 _LEVEL_COLORS = {
@@ -127,6 +130,12 @@ class RunArtifacts:
             "Section critique", "Section revised",
             "Report assembled", "Report overview",
             "Audit completed", "Audit failed",
+            "Decomposition completed", "Decomposition failed",
+            "Thinking about sub-problem", "Sub-problem verified", "Sub-problem failed",
+            "Revising sub-problem", "Reached max depth",
+            "On-demand search completed", "On-demand search failed",
+            "Writing depth report",
+            "Verification failed",
         )
         if level not in ("ERROR", "WARN", "WARNING") and not any(
             message.startswith(prefix) for prefix in _MILESTONE_PREFIXES
