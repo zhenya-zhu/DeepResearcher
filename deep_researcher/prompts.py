@@ -134,6 +134,7 @@ def build_section_research_messages(
                 "IMPORTANT: Generate follow_up_queries aggressively. Think about what specific details, comparisons, data points, or mechanism explanations are still missing. Each follow_up_query should target a DIFFERENT source type or angle than existing evidence — prioritize official documentation, academic papers, engineering blog posts, and open-source repository documentation to maximize source diversity.\n"
                 "IMPORTANT: Write all follow_up_queries in ENGLISH. Use English keywords and proper nouns only.\n"
                 "If evidence is thin, reduce breadth instead of returning a long exhaustive list.\n"
+                "FINDING QUALITY: Write findings as confident analytical claims, not hedged observations. Bad: 'Evidence suggests that X might be the case but this remains unverified.' Good: 'X uses a multi-agent architecture with dedicated planning and execution agents.' State what the evidence shows directly. Do not include meta-commentary about evidence quality, search failures, or confidence levels in thesis, findings, or reasoning_steps.\n"
                 "Return JSON only."
             ),
         },
@@ -508,6 +509,7 @@ def build_section_critique_messages(
                 "You are a rigorous research editor reviewing a section draft.\n"
                 "Evaluate the section for: analytical depth, evidence support, logical coherence, "
                 "source diversity, and completeness relative to the section goal.\n"
+                "CRITICAL: Flag any meta-commentary about the research process (evidence gaps, search failures, confidence caveats, epistemic disclaimers) as a HIGH severity issue. The report must read as authoritative analysis.\n"
                 "Be specific and actionable in your critique.\n"
                 "Return JSON only."
             ),
