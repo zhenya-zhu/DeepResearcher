@@ -117,7 +117,7 @@ class AppConfig:
         max_output_tokens=8000,
     ))
     researcher: ModelSelection = field(default_factory=lambda: ModelSelection(
-        candidates=["anthropic--claude-4.6-sonnet", "gpt-5", "sonar-pro"],
+        candidates=["sonar-pro", "anthropic--claude-4.6-sonnet", "gpt-5"],
         temperature=0.2,
         max_output_tokens=5000,
     ))
@@ -206,7 +206,7 @@ class AppConfig:
         config.researcher = ModelSelection(
             candidates=_split_models(
                 os.getenv("DEEP_RESEARCHER_RESEARCHER_MODELS"),
-                ["anthropic--claude-4.6-sonnet", "gpt-5", "sonar-pro"],
+                ["sonar-pro", "anthropic--claude-4.6-sonnet", "gpt-5"],
             ),
             temperature=_env_float("DEEP_RESEARCHER_RESEARCHER_TEMPERATURE", 0.2),
             max_output_tokens=_env_int_alias(

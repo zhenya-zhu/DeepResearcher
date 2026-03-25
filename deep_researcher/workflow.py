@@ -28,6 +28,7 @@ from .search import (
     extract_relevant_passages,
 )
 from .semantic_registry import load_semantic_registry
+from .sonar_adapter import adapt_sonar_response, is_sonar_model
 from .state import AuditIssue, EvidenceRequirement, Finding, GapTask, ReasoningStep, ResearchState, SearchResultRecord, SectionState, SourceRecord
 from .tracing import RunArtifacts
 from .workspace_sources import WorkspaceDocument, discover_workspace_documents, select_workspace_evidence
@@ -1343,11 +1344,21 @@ class DeepResearcher:
 
         messages = build_section_research_messages(state.question, section, state.current_round, evidence_packets)
         try:
-            model, payload = self.router.complete_json(
-                "section-{0}-round-{1}".format(section.section_id, state.current_round),
-                messages,
-                self.config.researcher,
-            )
+            task_label = "section-{0}-round-{1}".format(section.section_id, state.current_round)
+            try:
+                model, payload = self.router.complete_json(
+                    task_label,
+                    messages,
+                    self.config.researcher,
+                )
+            except RuntimeError as json_exc:
+                result = self.router.complete_text(task_label + "-sonar-retry", messages, self.config.researcher)
+                if is_sonar_model(result.model):
+                    payload = adapt_sonar_response(result.content)
+                    model = result.model
+                    self.tracker.log("section", section.section_id, "Used sonar adapter for non-JSON response", data={"model": model})
+                else:
+                    raise json_exc
             section.thesis = str(payload.get("thesis", section.thesis or section.summary)).strip()
             section.key_drivers = _trim_list([str(item) for item in payload.get("key_drivers", [])], 6)
             section.reasoning_steps = self._merge_reasoning_steps(
