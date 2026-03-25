@@ -109,7 +109,7 @@ class GapTask:
 @dataclass
 class ThinkingStep:
     step_id: str
-    step_type: str  # "decompose" | "reason" | "verify" | "revise" | "search_request"
+    step_type: str  # "decompose" | "reason" | "verify" | "revise" | "search_request" | "computation" | "adversarial_verify"
     content: str
     parent_step_id: str = ""
     confidence: float = 0.0
@@ -153,6 +153,7 @@ class DepthState:
     report_markdown: str = ""
     audit_issues: List[AuditIssue] = field(default_factory=list)
     debug_notes: List[str] = field(default_factory=list)
+    computation_count: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -210,6 +211,7 @@ class DepthState:
             report_markdown=raw.get("report_markdown", ""),
             audit_issues=audit_issues,
             debug_notes=raw.get("debug_notes", []),
+            computation_count=raw.get("computation_count", 0),
         )
 
     @classmethod
