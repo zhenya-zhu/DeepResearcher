@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from urllib.parse import urlparse, urlsplit
 
-from .config import AppConfig
+from .config import AppConfig, ModelSelection
 from .llm import AnthropicCompatibleBackend, MockBackend, ModelRouter, MultiProviderBackend, OpenAICompatibleBackend
 from .model_capabilities import load_model_capability_registry
 from .prompts import (
@@ -28,6 +28,7 @@ from .search import (
     extract_relevant_passages,
 )
 from .semantic_registry import load_semantic_registry
+from .sonar_adapter import adapt_sonar_response, is_sonar_model
 from .state import AuditIssue, EvidenceRequirement, Finding, GapTask, ReasoningStep, ResearchState, SearchResultRecord, SectionState, SourceRecord
 from .tracing import RunArtifacts
 from .workspace_sources import WorkspaceDocument, discover_workspace_documents, select_workspace_evidence
@@ -1343,11 +1344,38 @@ class DeepResearcher:
 
         messages = build_section_research_messages(state.question, section, state.current_round, evidence_packets)
         try:
-            model, payload = self.router.complete_json(
-                "section-{0}-round-{1}".format(section.section_id, state.current_round),
-                messages,
-                self.config.researcher,
-            )
+            task_label = "section-{0}-round-{1}".format(section.section_id, state.current_round)
+            try:
+                model, payload = self.router.complete_json(
+                    task_label,
+                    messages,
+                    self.config.researcher,
+                )
+            except RuntimeError as json_exc:
+                # Only retry with Sonar models — non-Sonar models should produce valid JSON
+                sonar_candidates = [c for c in self.config.researcher.candidates if is_sonar_model(c)]
+                if not sonar_candidates:
+                    raise json_exc
+                sonar_selection = ModelSelection(
+                    candidates=sonar_candidates,
+                    temperature=self.config.researcher.temperature,
+                    max_output_tokens=self.config.researcher.max_output_tokens,
+                )
+                result = self.router.complete_text(task_label + "-sonar-retry", messages, sonar_selection)
+                payload = adapt_sonar_response(result.content)
+                model = result.model
+                # Register Sonar URLs as real sources and remap sonar-ref-N to S-IDs
+                sonar_urls = payload.pop("_sonar_urls", [])
+                ref_to_sid: Dict[str, str] = {}
+                for url in sonar_urls:
+                    source = self._register_source(state, "sonar:" + section.section_id, url.split("/")[-1][:80], url, "")
+                    # Map by order: sonar-ref-1 → first URL, sonar-ref-2 → second, etc.
+                    ref_key = "sonar-ref-{0}".format(len(ref_to_sid) + 1)
+                    ref_to_sid[ref_key] = source.source_id
+                if ref_to_sid:
+                    for finding in payload.get("findings", []):
+                        finding["source_ids"] = [ref_to_sid.get(sid, sid) for sid in finding.get("source_ids", [])]
+                self.tracker.log("section", section.section_id, "Used sonar adapter for non-JSON response", data={"model": model, "urls_registered": len(sonar_urls)})
             section.thesis = str(payload.get("thesis", section.thesis or section.summary)).strip()
             section.key_drivers = _trim_list([str(item) for item in payload.get("key_drivers", [])], 6)
             section.reasoning_steps = self._merge_reasoning_steps(
@@ -1770,10 +1798,6 @@ class DeepResearcher:
             lines.extend(["## Conclusion", ""])
             lines.extend("- {0}".format(item) for item in conclusion)
             lines.append("")
-        if state.global_gaps:
-            lines.extend(["## Remaining Gaps", ""])
-            lines.extend("- {0}".format(item) for item in state.global_gaps)
-            lines.append("")
         return "\n".join(lines).rstrip() + "\n"
 
     def _generate_report_overview(self, state: ResearchState) -> Dict[str, List[str]]:
@@ -1819,8 +1843,6 @@ class DeepResearcher:
             final_thesis = state.sections[-1].thesis or state.sections[-1].summary
             if final_thesis:
                 conclusion.append(final_thesis)
-        if state.global_gaps:
-            conclusion.append("当前结论仍受若干证据缺口约束，需结合 Remaining Gaps 一并解读。")
         return {
             "title": title,
             "executive_summary": _trim_list(executive_summary, 5),
@@ -2275,11 +2297,4 @@ class DeepResearcher:
         for section in state.sections:
             lines.append(section.draft or self._section_draft(section))
             lines.append("")
-        if state.global_gaps:
-            lines.extend([
-                "## Remaining Gaps",
-                "",
-                *["- {0}".format(item) for item in state.global_gaps],
-                "",
-            ])
         return "\n".join(lines).strip() + "\n"
