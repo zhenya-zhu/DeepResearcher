@@ -4,6 +4,35 @@ import json
 from .state import ResearchState, SectionState
 
 
+CALIBRATED_CONFIDENCE_GUIDANCE = (
+    "WRITING TONE — CALIBRATED CONFIDENCE:\n"
+    "- Write as authoritative professional analysis.\n"
+    "- When evidence directly supports a claim, state it confidently with citations.\n"
+    "- When making analytical inferences, use measured language:\n"
+    "  GOOD: 'Available evidence indicates X [source:S003].'\n"
+    "  GOOD: 'Based on patterns observed in Y, Z likely follows [source:S005].'\n"
+    "  GOOD: 'While comprehensive benchmarks are not yet published, early indicators suggest...'\n"
+)
+
+META_COMMENTARY_BAN = (
+    "- BANNED — Research process narration:\n"
+    "  NEVER: 'search returned irrelevant results', 'no evidence was found'\n"
+    "  NEVER: 'evidence gap', 'data gap', 'insufficient data'\n"
+    "  NEVER: 'unverified', 'pending confirmation', 'confidence is low'\n"
+    "  NEVER: 'queried but not used', 'not retrieved'\n"
+    "  (Note: 'limited' is fine analytically — 'limited adoption', 'limited benchmarks' —\n"
+    "   banned only in research-process context)\n"
+    "- BANNED — Confidence ratings and epistemic notices.\n"
+)
+
+CRITIQUE_DUAL_FLAG = (
+    "CRITICAL: Flag TWO types of writing quality issues as HIGH severity:\n"
+    "1. META-COMMENTARY: narration about the research process.\n"
+    "2. FALSE CONFIDENCE: strong claims without citations, speculation as fact.\n"
+    "Both are equally bad.\n"
+)
+
+
 def _json_block(value: Dict) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
@@ -134,8 +163,10 @@ def build_section_research_messages(
                 "IMPORTANT: Generate follow_up_queries aggressively. Think about what specific details, comparisons, data points, or mechanism explanations are still missing. Each follow_up_query should target a DIFFERENT source type or angle than existing evidence — prioritize official documentation, academic papers, engineering blog posts, and open-source repository documentation to maximize source diversity.\n"
                 "IMPORTANT: Write all follow_up_queries in ENGLISH. Use English keywords and proper nouns only.\n"
                 "If evidence is thin, reduce breadth instead of returning a long exhaustive list.\n"
-                "FINDING QUALITY: Write findings as confident analytical claims, not hedged observations. Bad: 'Evidence suggests that X might be the case but this remains unverified.' Good: 'X uses a multi-agent architecture with dedicated planning and execution agents.' State what the evidence shows directly. Do not include meta-commentary about evidence quality, search failures, or confidence levels in thesis, findings, or reasoning_steps.\n"
-                "Return JSON only."
+                "FINDING QUALITY: Write findings as confident analytical claims, not hedged observations. State what the evidence shows directly.\n"
+                + CALIBRATED_CONFIDENCE_GUIDANCE
+                + META_COMMENTARY_BAN
+                + "Return JSON only."
             ),
         },
         {
@@ -312,8 +343,9 @@ def build_report_messages(state: ResearchState) -> List[Dict[str, str]]:
                 "Do not only enumerate facts. For each section, turn evidence into explicit analytical judgment.\n"
                 "Use an observation -> inference -> implication structure wherever possible.\n"
                 "When evidence is incomplete, state the uncertainty or counterpoint directly instead of pretending certainty.\n"
-                "ABSOLUTE PROHIBITION — META-COMMENTARY: Never write about the research process, evidence gaps, search failures, confidence ratings, or epistemic disclaimers. Write as authoritative analysis. If evidence is thin on a point, state what is known and move on.\n"
-                "Do not write first-person diary-style narration."
+                + CALIBRATED_CONFIDENCE_GUIDANCE
+                + META_COMMENTARY_BAN
+                + "Do not write first-person diary-style narration."
             ),
         },
         {
@@ -409,14 +441,9 @@ def build_section_report_messages(state: ResearchState, section: SectionState) -
                 "- State counterpoints and limitations directly rather than pretending certainty.\n"
                 "- CITATION DIVERSITY IS THE #1 PRIORITY: You MUST cite as many DIFFERENT source_ids as possible. If the section packet contains findings citing S003, S005, S008 etc., you MUST use those citations in your prose — do NOT collapse all citations to S001/S002. The report quality is measured primarily by the number of unique sources cited.\n"
                 "- If cross-section context is provided, reference connections to other sections where relevant and avoid contradicting established findings.\n"
-                "ABSOLUTE PROHIBITION — META-COMMENTARY AND EPISTEMIC DISCLAIMERS:\n"
-                "- NEVER write about the research process itself. The reader does not care how evidence was gathered.\n"
-                "- NEVER use phrases like: 'evidence gap', 'insufficient data', 'unverified', 'could not be confirmed', 'no evidence was found', 'search returned irrelevant results', 'limited evidence', 'data gap', 'confidence is low', 'epistemic notice', 'methodological limitation', 'pending confirmation', 'should be treated as', 'remains unresolved in available sources', 'not retrieved', 'queried but not used'.\n"
-                "- NEVER include confidence ratings, epistemic notices, or disclaimers about source quality.\n"
-                "- NEVER mark table cells as 'unverified' or 'unknown' — if you don't have data, omit the row or state the best available estimate.\n"
-                "- If evidence for a specific claim is thin, simply state what IS known and move on. Do not apologize or flag the gap.\n"
-                "- The report must read as authoritative professional analysis, not as a research log or working notes.\n"
-                "End every paragraph cleanly with punctuation or a citation bracket.\n"
+                + CALIBRATED_CONFIDENCE_GUIDANCE
+                + META_COMMENTARY_BAN
+                + "End every paragraph cleanly with punctuation or a citation bracket.\n"
                 "Do not write any executive summary, conclusion, appendix, or sources list."
             ),
         },
@@ -463,8 +490,9 @@ def build_report_overview_messages(state: ResearchState) -> List[Dict[str, str]]
                 "The executive_summary should be 2-3 substantial paragraphs (not just bullets) that synthesize key findings across all sections, highlight the most important insights, and frame the overall narrative.\n"
                 "The conclusion should be 2-3 paragraphs that bring together cross-cutting themes, state the overall assessment, and note remaining open questions.\n"
                 "Write in a professional analytical tone. Be specific and cite concrete findings from the sections.\n"
-                "NEVER include meta-commentary about the research process, evidence quality, search methodology, or data limitations. Write as authoritative analysis.\n"
-                "Return JSON only."
+                + CALIBRATED_CONFIDENCE_GUIDANCE
+                + META_COMMENTARY_BAN
+                + "Return JSON only."
             ),
         },
         {
@@ -509,8 +537,8 @@ def build_section_critique_messages(
                 "You are a rigorous research editor reviewing a section draft.\n"
                 "Evaluate the section for: analytical depth, evidence support, logical coherence, "
                 "source diversity, and completeness relative to the section goal.\n"
-                "CRITICAL: Flag any meta-commentary about the research process (evidence gaps, search failures, confidence caveats, epistemic disclaimers) as a HIGH severity issue. The report must read as authoritative analysis.\n"
-                "Be specific and actionable in your critique.\n"
+                + CRITIQUE_DUAL_FLAG
+                + "Be specific and actionable in your critique.\n"
                 "Return JSON only."
             ),
         },
