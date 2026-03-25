@@ -2,12 +2,19 @@
 
 ## 概览
 
-DeepResearcher 是一个**迭代式深度研究代理**，通过多轮搜索-分析-补缺循环，自动生成带引用的长篇研究报告。核心设计理念：**先规划、再迭代研究、最后高质量写作**。
+DeepResearcher 是一个**迭代式深度研究代理**，支持两种研究模式：
+
+- **Breadth（广度模式）**：搜索驱动，多轮搜索-分析-补缺循环，生成带引用的多章节调查报告。适合"Map the landscape of X"类问题。
+- **Depth（深度模式）**：推理驱动，问题分解-思考-验证-修正循环，生成深度分析报告。适合"Solve this hard problem"类需要深度逻辑推理的问题。
 
 ## 运行命令
 
 ```bash
+# Breadth mode（默认）
 DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher --question-file queries.json --query-index 1
+
+# Depth mode
+DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher --mode depth --question "复杂分析问题"
 ```
 
 ### 常用 CLI 选项
@@ -24,8 +31,25 @@ DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher --question-file q
 | `--workspace-source <path>` | 添加本地文件作为证据来源 |
 | `--planner-models`, `--researcher-models`, `--writer-models`, `--verifier-models` | 覆盖各角色模型 |
 | `--mock` / `--mock-llm` / `--mock-tools` | 测试模式 |
+| `--mode breadth\|depth` | 研究模式：breadth（调查报告）或 depth（深度推理） |
 
-## 五阶段流水线
+## 模式对比
+
+| 维度 | Breadth（广度） | Depth（深度） |
+|------|----------------|--------------|
+| 适用场景 | "调查 X 的全景" | "解决这个复杂问题" |
+| 核心循环 | 搜索 → 分析 → 补缺 → 搜索 | 分解 → 推理 → 验证 → 修正 |
+| 搜索策略 | 大量主动搜索（每章节 3-4 轮） | 最少按需搜索（仅推理需要时） |
+| LLM 使用 | 多次短调用（结构化 JSON） | 少次长调用（16K tokens 推理链） |
+| 输出 | 多章节调查报告 + 来源引用 | 深度分析 + 公式推导 + 失败路径 |
+| 典型耗时 | ~15-25 分钟 | ~30-45 分钟 |
+| 编排类 | `DeepResearcher`（workflow.py） | `DeepThinker`（depth_workflow.py） |
+
+---
+
+## Part I: Breadth Mode（广度模式）
+
+### 五阶段流水线
 
 ```
 ┌─────────┐    ┌──────────────────┐    ┌──────────┐    ┌──────────┐    ┌───────┐
@@ -305,9 +329,11 @@ DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher --question-file q
 | `deep_researcher/__main__.py` | 入口 | - |
 | `deep_researcher/cli.py` | CLI 参数解析 | ~440 |
 | `deep_researcher/config.py` | 配置管理（AppConfig） | ~233 |
-| `deep_researcher/state.py` | 数据结构（ResearchState, SectionState, SourceRecord） | ~211 |
-| `deep_researcher/workflow.py` | 主编排引擎（DeepResearcher 类） | ~2000+ |
-| `deep_researcher/prompts.py` | 所有阶段的 LLM Prompt 模板 | ~676 |
+| `deep_researcher/state.py` | 数据结构（ResearchState, DepthState, SectionState, SourceRecord） | ~350+ |
+| `deep_researcher/workflow.py` | Breadth Mode 编排引擎（DeepResearcher 类） | ~2000+ |
+| `deep_researcher/depth_workflow.py` | Depth Mode 编排引擎（DeepThinker 类） | ~700+ |
+| `deep_researcher/prompts.py` | Breadth Mode LLM Prompt 模板 | ~676 |
+| `deep_researcher/depth_prompts.py` | Depth Mode LLM Prompt 模板（7 个 builder） | ~400+ |
 | `deep_researcher/llm.py` | LLM 后端实现（OpenAI/Anthropic 兼容） | ~300+ |
 | `deep_researcher/search.py` | 网页搜索（DuckDuckGo）与 HTML 抓取 | ~550+ |
 | `deep_researcher/semantic_registry.py` | 证据画像与来源包注册表 | ~115 |
@@ -437,3 +463,179 @@ runs/{run_id}/
 - **多语言查询归一化**：中文停用词去除、CJK/Latin 分词
 - **网络模式自动检测**：proxy/direct 自适应，按域名缓存最优模式
 - **Semantic Registry**：证据画像 + 来源包机制，将高层需求映射为具体检索策略
+
+---
+
+## Part II: Depth Mode（深度推理模式）
+
+### 概述
+
+Depth Mode 是受 Google Gemini DeepThink 启发的深度推理模式，通过**问题分解 → 逐步推理 → 严格验证 → 迭代修正**的循环解决复杂分析问题。与 Breadth Mode 的搜索驱动方法互补——Breadth 追求覆盖面广度，Depth 追求推理链深度。
+
+**编排入口：** [`DeepThinker.run()`](../deep_researcher/depth_workflow.py)
+
+### 四阶段流水线
+
+```
+┌───────────┐    ┌─────────────────────────────┐    ┌───────────┐    ┌───────┐
+│ Decompose  │ →  │      Think Loop              │ →  │ Synthesize │ →  │ Audit │
+│ (分解子问题)│    │ (推理→验证→修正，按拓扑序)     │    │ (章节+总览) │    │(质检)  │
+└───────────┘    └─────────────────────────────┘    └───────────┘    └───────┘
+```
+
+### 1. Decompose（问题分解）
+
+**入口：** [`_decompose()`](../deep_researcher/depth_workflow.py)
+
+Planner LLM 将复杂问题分解为多个子问题（最多 `max_sub_problems` 个），每个子问题带有：
+- `problem_id` — 唯一标识
+- `description` — 描述
+- `dependencies` — 依赖关系（哪些子问题必须先解决）
+
+系统对子问题进行**拓扑排序**（[`_topological_sort()`](../deep_researcher/depth_workflow.py)），按依赖顺序处理。循环依赖通过跳过检测优雅降级。
+
+**Fallback：** 分解失败时退化为单一子问题（原始问题本身）。
+
+**Prompt：** [`build_depth_decomposition_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_decompose`
+
+### 2. Think Loop（推理循环）
+
+**入口：** [`_think_loop()`](../deep_researcher/depth_workflow.py)
+
+按拓扑序逐一处理每个子问题，每个子问题经历：
+
+**Step 2a — Reason（推理）**
+- Thinker LLM（高输出 16K tokens）生成推理链：`steps[]`（每步含 step_type/content/confidence）+ `conclusion` + `confidence`
+- 若推理中需要外部事实，LLM 可通过 `needs_search` 字段触发按需搜索
+
+**Step 2b — On-Demand Search（按需搜索）**
+- 仅在推理请求时执行，最多 `max_on_demand_searches` 次（默认 3）
+- **相关性过滤**（[`_snippet_relevance()`](../deep_researcher/depth_workflow.py)）：搜索词与标题/摘要的重叠度 < 15% 的结果被跳过，防止注册不相关来源
+- **内容验证**：页面抓取后再次检查内容相关性
+- 搜索后重新推理，将证据注入推理上下文
+
+**Step 2c — Verify（验证）**
+- Verifier LLM 检查推理链：逻辑错误、不支持的假设、循环论证
+- 返回 `overall_verdict`（pass/fail）+ 每步的 `step_verdicts`
+- 通过且 confidence ≥ `depth_confidence_threshold`（0.7） → 标记 "verified"
+
+**Step 2d — Revise（修正）**
+- 验证未通过时，Thinker LLM 根据验证反馈修正推理
+- 最多 `max_depth_revisions` 次（默认 3）
+- 修正仍未通过 → 标记 "failed"，记入 `failed_paths`
+
+**收敛策略：** 有界迭代 + 回溯。最多 `max_depth_iterations`（5）个子问题，每个最多 3 次修正，confidence 阈值 0.7。
+
+**Prompt：**
+- 推理：[`build_depth_thinking_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_think`
+- 验证：[`build_depth_verification_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_verify`
+- 修正：[`build_depth_revision_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_revise`
+
+### 3. Synthesize Report（报告合成）
+
+**入口：** [`_synthesize_report()`](../deep_researcher/depth_workflow.py)
+
+1. **章节报告**：每个子问题生成独立的 Markdown 章节，包含推理过程、结论和置信度
+2. **总览报告**：全局视角的深度分析报告，强调逻辑链、子问题关联、失败路径
+3. **来源附录**：
+   - **Sources**：只包含报告中**实际引用**的来源（通过正则 `[source:SXXX]` 提取）
+   - **Searched But Not Cited**：搜索到但未引用的来源（透明度）
+
+**引用规则：** Depth Mode 的引用策略比 Breadth Mode 更严格：
+- 只允许引用 AVAILABLE_SOURCES 列表中的来源
+- 来自领域知识的推理不加引用标记
+- 禁止编造来源 ID
+
+**Prompt：**
+- 总览：[`build_depth_report_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_report`
+- 章节：[`build_depth_section_report_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_section_report`
+
+### 4. Audit（审计）
+
+复用与 Breadth Mode 相同的审计模式。Verifier LLM 检查逻辑一致性、引用真实性、公式推导正确性。
+
+**Prompt：** [`build_depth_audit_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `audit`
+
+### Depth Mode 数据结构
+
+**DepthState**（根对象）：
+- `run_id`, `question`, `mode="depth"`, `status`
+- `problem_analysis` — 问题分析
+- `sub_problems: List[SubProblem]` — 子问题列表
+- `problem_graph: Dict[str, List[str]]` — 依赖图
+- `global_reasoning_chain: List[ThinkingStep]` — 全局推理链
+- `failed_paths: List[str]` — 失败路径记录
+- `sources`, `report_markdown`, `audit_issues`
+
+**SubProblem**：
+- `problem_id`, `description`, `dependencies`
+- `status` — "pending" → "thinking" → "verified" / "failed"
+- `thinking_steps: List[ThinkingStep]` — 推理步骤
+- `conclusion`, `confidence`
+- `revision_count`, `max_revisions`
+
+**ThinkingStep**：
+- `step_id`, `step_type` — "decompose" / "reason" / "verify" / "revise" / "search_request"
+- `content`, `confidence`
+- `verification_result` — "pass" / "fail" / "uncertain"
+
+### Depth Mode 模型角色
+
+| 角色 | 用途 | 默认模型候选 | 温度 | max_output_tokens |
+|------|------|-------------|------|-------------------|
+| Planner | 问题分解 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.2 | 5000 |
+| Thinker | 推理/修正 | claude-4.6-sonnet, gpt-5, claude-4.6-opus | 0.3 | **16000** |
+| Verifier | 验证/审计 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.0 | 5000 |
+| Writer | 报告撰写 | claude-4.6-sonnet, gpt-5, opus | 0.2 | 5000 |
+
+> Thinker 角色使用 16K max_output_tokens 以支持长推理链。推荐 Sonnet-first 配置以避免 Opus 超时。
+
+### Depth Mode 配置
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `DEEP_RESEARCHER_MODE` | 研究模式 | `breadth` |
+| `DEEP_RESEARCHER_MAX_DEPTH_ITERATIONS` | 最大子问题处理数 | 5 |
+| `DEEP_RESEARCHER_MAX_DEPTH_REVISIONS` | 每个子问题最大修正次数 | 3 |
+| `DEEP_RESEARCHER_MAX_SUB_PROBLEMS` | 最大分解子问题数 | 6 |
+| `DEEP_RESEARCHER_DEPTH_CONFIDENCE_THRESHOLD` | 验证通过的置信度阈值 | 0.7 |
+| `DEEP_RESEARCHER_MAX_ON_DEMAND_SEARCHES` | 最大按需搜索次数 | 3 |
+| `DEEP_RESEARCHER_THINKER_MODELS` | Thinker 角色模型候选 | claude-4.6-sonnet,gpt-5,claude-4.6-opus |
+| `DEEP_RESEARCHER_THINKER_TEMPERATURE` | Thinker 温度 | 0.3 |
+| `DEEP_RESEARCHER_THINKER_MAX_OUTPUT_TOKENS` | Thinker 最大输出 | 16000 |
+
+### Depth Mode 核心源文件
+
+| 文件 | 说明 |
+|------|------|
+| `deep_researcher/depth_workflow.py` | DeepThinker 编排引擎（分解→推理→验证→修正→合成） |
+| `deep_researcher/depth_prompts.py` | Depth Mode 所有阶段的 Prompt 模板（7 个 message builder） |
+| `tests/test_depth_workflow.py` | Depth Mode 测试套件（19 个测试） |
+
+### Depth Mode 报告格式
+
+```markdown
+# 深度分析报告标题
+
+## 一、问题分析
+核心维度、分析逻辑链...
+
+## 二、子问题解答
+### 2.1 子问题标题
+推理过程、成本函数推导、数据表格...
+
+## 三、综合分析
+竞争力排序、敏感性分析...
+
+## 四、被否定的分析路径
+失败的推理路径及失败原因...
+
+## 五、结论
+核心结论、价格区间、长期展望...
+
+## Sources
+- S001: [标题](URL)
+
+## Searched But Not Cited
+- S003: [标题](URL)
+```
