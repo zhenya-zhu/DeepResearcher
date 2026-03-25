@@ -318,6 +318,89 @@ class MockBackend:
                 "## Executive Summary\n\n"
                 "- This legacy path remains available for compatibility. [source:S001]\n"
             )
+        if "TASK_KIND: depth_decompose" in joined:
+            question = _extract_marker(joined, "QUESTION") or "complex problem"
+            return json.dumps({
+                "problem_analysis": "The question requires decomposing into logical sub-problems: {0}".format(question),
+                "reasoning_approach": "Sequential reasoning with dependency resolution.",
+                "sub_problems": [
+                    {
+                        "id": "define-scope",
+                        "description": "Define the scope and key terms of: {0}".format(question),
+                        "dependencies": [],
+                    },
+                    {
+                        "id": "analyze-core",
+                        "description": "Analyze the core mechanisms and tradeoffs.",
+                        "dependencies": ["define-scope"],
+                    },
+                    {
+                        "id": "synthesize",
+                        "description": "Synthesize conclusions and provide recommendations.",
+                        "dependencies": ["define-scope", "analyze-core"],
+                    },
+                ],
+            }, ensure_ascii=False)
+        if "TASK_KIND: depth_think" in joined:
+            sp_id = _extract_marker(joined, "SUB_PROBLEM_ID") or "sub-problem"
+            return json.dumps({
+                "steps": [
+                    {
+                        "step_id": "step-1",
+                        "step_type": "reason",
+                        "content": "First, we establish the foundational understanding of the sub-problem.",
+                        "confidence": 0.8,
+                    },
+                    {
+                        "step_id": "step-2",
+                        "step_type": "reason",
+                        "content": "Building on this foundation, we can derive the key relationships and constraints.",
+                        "confidence": 0.75,
+                    },
+                ],
+                "conclusion": "The sub-problem {0} can be resolved through systematic analysis of its constraints.".format(sp_id),
+                "confidence": 0.78,
+                "needs_search": [],
+            }, ensure_ascii=False)
+        if "TASK_KIND: depth_verify" in joined:
+            return json.dumps({
+                "overall_verdict": "pass",
+                "step_verdicts": [
+                    {"step_id": "step-1", "verdict": "pass", "issues": []},
+                    {"step_id": "step-2", "verdict": "pass", "issues": []},
+                ],
+                "critical_issues": [],
+                "suggested_revisions": [],
+            }, ensure_ascii=False)
+        if "TASK_KIND: depth_revise" in joined:
+            return json.dumps({
+                "steps": [
+                    {
+                        "step_id": "revised-1",
+                        "step_type": "revise",
+                        "content": "Revised reasoning addressing the verification feedback.",
+                        "confidence": 0.85,
+                    },
+                ],
+                "conclusion": "After revision, the conclusion is strengthened.",
+                "confidence": 0.85,
+                "needs_search": [],
+            }, ensure_ascii=False)
+        if "TASK_KIND: depth_report" in joined:
+            return (
+                "# Mock Deep Analysis Report\n\n"
+                "## Problem Analysis\n\n"
+                "The question was decomposed into sub-problems and analyzed through iterative reasoning.\n\n"
+                "## Conclusion\n\n"
+                "The analysis demonstrates that systematic decomposition yields verified conclusions.\n"
+            )
+        if "TASK_KIND: depth_section_report" in joined:
+            sp_id = _extract_marker(joined, "SUB_PROBLEM_ID") or "sub-problem"
+            return (
+                "## {0}\n\n"
+                "This sub-problem was addressed through careful reasoning and verification.\n\n"
+                "The analysis reveals that the key factors are interconnected. [source:S001]\n"
+            ).format(sp_id)
         return "{}"
 
 

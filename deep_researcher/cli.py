@@ -132,6 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--query-index", type=int, help="1-based query index when --question-file contains a numbered query list.")
     parser.add_argument("--list-queries", action="store_true", help="List numbered queries from --question-file and exit.")
     parser.add_argument("--resume", help="Resume from a checkpoint JSON file.")
+    parser.add_argument("--mode", choices=["breadth", "depth"], help="Research mode: breadth (survey) or depth (deep reasoning).")
     parser.add_argument("--mock", action="store_true", help="Use mock LLM and mock tools.")
     parser.add_argument("--mock-llm", action="store_true", help="Use mock LLM only.")
     parser.add_argument("--mock-tools", action="store_true", help="Use mock search and fetch tools only.")
@@ -288,6 +289,8 @@ def main(argv: Optional[list] = None) -> int:
         config.verbose = False
     if args.semantic_mode:
         config.semantic_mode = args.semantic_mode
+    if args.mode:
+        config.mode = args.mode
     planner_models = _parse_models(args.planner_models)
     researcher_models = _parse_models(args.researcher_models)
     writer_models = _parse_models(args.writer_models)
@@ -331,7 +334,11 @@ def main(argv: Optional[list] = None) -> int:
     if args.compare_semantic_modes:
         return _run_semantic_comparison(parser, args, config, question)
 
-    runner = DeepResearcher(config)
+    if config.mode == "depth":
+        from .depth_workflow import DeepThinker
+        runner = DeepThinker(config)
+    else:
+        runner = DeepResearcher(config)
     final_state = runner.plan(question=question, state=state) if args.plan_only else runner.run(question=question, state=state)
     run_dir = runner.run_dir or ""
     print("Run ID: {0}".format(final_state.run_id))

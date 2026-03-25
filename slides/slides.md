@@ -650,15 +650,179 @@ layout: center
 class: text-center
 ---
 
+# 新功能：Depth Mode（深度推理模式）
+
+**从广度搜索到深度思考**
+
+---
+
+# 为什么需要 Depth Mode？
+
+<div class="grid grid-cols-2 gap-8 mt-8">
+<div>
+
+### Breadth（已有）
+
+- 适合 "Map the landscape of X"
+- 搜索驱动：5-6 章节 × 多轮搜索
+- 输出：**多章节调查报告**
+- 强项：覆盖面广、来源丰富
+
+</div>
+<div>
+
+### Depth（新增）
+
+- 适合 "Solve this hard problem"
+- 推理驱动：分解 → 思考 → 验证 → 修正
+- 输出：**深度分析 + 公式推导**
+- 强项：逻辑严密、多情景分析
+
+</div>
+</div>
+
+<v-click>
+
+<div class="mt-4 text-center">
+
+> 类比：Google 有 **Deep Research**（广度）和 **DeepThink**（深度），我们也需要两种模式
+
+</div>
+
+</v-click>
+
+---
+
+# Depth Mode 架构
+
+```
+Question
+    │
+    ▼
+[1. DECOMPOSE] ── planner LLM
+    │  分解为子问题 + 依赖图 + 拓扑排序
+    ▼
+[2. THINK LOOP] ── 按依赖顺序逐一处理:
+    │
+    │  ┌→ [REASON] ── thinker LLM (高输出 16K tokens)
+    │  │    如需外部事实 → 触发按需搜索
+    │  │
+    │  ├→ [VERIFY] ── verifier LLM
+    │  │    通过 → 标记 "verified"
+    │  │    失败 → 进入修正
+    │  │
+    │  └→ [REVISE] ── thinker + 反馈（最多 3 次）
+    │       仍失败 → 记录为 "failed path"
+    ▼
+[3. SYNTHESIZE] ── 逐章节 + 总览报告
+    ▼
+[4. AUDIT] ── 验证逻辑一致性、引用真实性
+```
+
+---
+
+# Depth vs Breadth: 资源使用
+
+<div class="text-sm mt-4">
+
+| 维度 | Breadth | Depth |
+|------|---------|-------|
+| LLM 调用次数 | ~30+ (plan + 6 sections × search + gap review + report) | ~15-20 (decompose + think + verify + revise + report) |
+| 搜索查询 | 大量（每章节 3-4 轮） | 极少（仅按需搜索） |
+| 单次输出长度 | 短（结构化 JSON） | 长（推理链 16K tokens） |
+| 用时 | ~15-25 分钟 | ~30-45 分钟 |
+| 核心开销 | 搜索 + 网页抓取 | LLM 推理 |
+
+</div>
+
+<v-click>
+
+<div class="mt-4">
+
+> Depth 模式用 **更少但更长** 的 LLM 调用，天然更适合速率限制环境
+
+</div>
+
+</v-click>
+
+---
+
+# 首次测试：煤化工深度分析
+
+**问题：** 煤化工能够取代石油化工的哪一些产物？在什么价格上能够取代？
+
+<div class="grid grid-cols-2 gap-6 mt-4 text-sm">
+<div>
+
+### 运行统计
+- ⏱️ 总时长：45 分钟
+- 🧩 子问题：6 个
+- ✅ 验证通过：3 个
+- ❌ 修正后失败：2 个
+- ⏹️ 达到迭代上限：1 个
+- 🔍 按需搜索：3 次
+- 📄 报告长度：~550 行
+
+</div>
+<div>
+
+### 报告内容
+- 产品谱系四层分类（A/B/C/D 类）
+- 乙烯成本函数推导（含联产品抵扣）
+- 煤制烯烃临界油价公式
+- 煤价敏感性分析（+100元/吨 → +9$/桶）
+- 碳价影响建模
+- 被否定的分析路径（4 条）
+
+</div>
+</div>
+
+<v-click>
+
+<div class="mt-2">
+
+> Think → Verify → Revise 循环工作良好：模型主动否定了斜率 8.5 的简化模型，修正为 16.54 的联产品抵扣模型
+
+</div>
+
+</v-click>
+
+---
+
+# 关键设计决策
+
+<div class="text-sm mt-4">
+
+| 决策 | 选择 | 原因 |
+|------|------|------|
+| 架构 | 独立 `DeepThinker` 类 | 不污染已有 breadth 代码，单一职责 |
+| 状态 | `DepthState` vs `ResearchState` 并行 | 不同关注点，组合优于继承 |
+| 子问题处理 | 顺序（按拓扑序） | V1 简单可靠，并行留给后续优化 |
+| 模型选择 | Sonnet-first + 300s 超时 | Opus 复杂推理容易超时 |
+| 搜索策略 | 按需最少搜索 | 推理为主，搜索为辅 |
+| 引用规则 | 只引已验证来源 | 防止模型对不相关来源编造引用 |
+
+</div>
+
+---
+layout: center
+class: text-center
+---
+
 # Q & A
 
-代码：`deep_researcher/workflow.py`
+代码：`deep_researcher/workflow.py`（breadth）| `deep_researcher/depth_workflow.py`（depth）
 
 文档：`docs/architecture.md`
 
 <br>
 
 ```bash
+# Breadth mode（默认）
 DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher \
   --question "你感兴趣的任何研究问题"
+
+# Depth mode（新增）
+DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher \
+  --mode depth --question "需要深度分析的复杂问题"
 ```
