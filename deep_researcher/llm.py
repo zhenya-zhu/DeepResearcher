@@ -361,6 +361,7 @@ class MockBackend:
                 "conclusion": "The sub-problem {0} can be resolved through systematic analysis of its constraints.".format(sp_id),
                 "confidence": 0.78,
                 "needs_search": [],
+                "needs_computation": [],
             }, ensure_ascii=False)
         if "TASK_KIND: depth_verify" in joined:
             return json.dumps({
@@ -371,6 +372,13 @@ class MockBackend:
                 ],
                 "critical_issues": [],
                 "suggested_revisions": [],
+            }, ensure_ascii=False)
+        if "TASK_KIND: depth_adversarial_verify" in joined:
+            return json.dumps({
+                "independent_reasoning": "Independent analysis confirms the conclusion is well-supported.",
+                "agrees_with_conclusion": True,
+                "disagreement_reason": "",
+                "confidence": 0.80,
             }, ensure_ascii=False)
         if "TASK_KIND: depth_revise" in joined:
             return json.dumps({
@@ -385,6 +393,7 @@ class MockBackend:
                 "conclusion": "After revision, the conclusion is strengthened.",
                 "confidence": 0.85,
                 "needs_search": [],
+                "needs_computation": [],
             }, ensure_ascii=False)
         if "TASK_KIND: depth_report" in joined:
             return (

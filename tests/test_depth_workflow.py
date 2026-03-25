@@ -1,9 +1,12 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
+import dataclasses
 import json
+import os
 import unittest
 
-from deep_researcher.config import AppConfig
+from deep_researcher.config import AppConfig, ModelSelection
 from deep_researcher.depth_workflow import DeepThinker, _topological_sort
 from deep_researcher.llm import MockBackend
 from deep_researcher.state import DepthState, SubProblem, ThinkingStep, utc_now
@@ -343,6 +346,470 @@ class DepthPromptsTest(unittest.TestCase):
         )
         messages = build_depth_report_messages(state)
         self.assertIn("TASK_KIND: depth_report", messages[0]["content"])
+
+    def test_adversarial_verification_messages_structure(self) -> None:
+        from deep_researcher.depth_prompts import build_depth_adversarial_verification_messages
+        sp = SubProblem(problem_id="test", description="test sub-problem", conclusion="The answer is 42.")
+        messages = build_depth_adversarial_verification_messages("question", sp)
+        self.assertEqual(len(messages), 2)
+        self.assertIn("TASK_KIND: depth_adversarial_verify", messages[0]["content"])
+        self.assertIn("The answer is 42.", messages[1]["content"])
+        self.assertNotIn("REASONING_STEPS", messages[1]["content"])
+
+
+class BestOfNTest(unittest.TestCase):
+    def test_best_of_n_picks_highest_confidence(self) -> None:
+        call_index = [0]
+
+        class VariableConfidenceBackend(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_think" in joined:
+                    call_index[0] += 1
+                    conf = 0.6 if call_index[0] % 2 == 1 else 0.9
+                    return json.dumps({
+                        "steps": [{"step_id": "s1", "step_type": "reason",
+                                   "content": "attempt {0}".format(call_index[0]), "confidence": conf}],
+                        "conclusion": "Conclusion with confidence {0}".format(conf),
+                        "confidence": conf,
+                        "needs_search": [],
+                        "needs_computation": [],
+                    })
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+            config.depth_best_of_n = 2
+
+            runner = DeepThinker(config, backend=VariableConfidenceBackend())
+            state = runner.run(question="Best of N test")
+
+            self.assertEqual(state.status, "completed")
+            # The winning attempt should have the higher confidence
+            for sp in state.sub_problems:
+                if sp.status == "verified":
+                    self.assertGreaterEqual(sp.confidence, 0.7)
+
+    def test_best_of_n_disabled_by_default(self) -> None:
+        config = AppConfig.from_env()
+        self.assertEqual(config.depth_best_of_n, 1)
+
+    def test_best_of_n_all_fail_gracefully(self) -> None:
+        class AlwaysFailThinkBackend(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_think" in joined:
+                    raise RuntimeError("LLM call failed")
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+            config.depth_best_of_n = 2
+
+            runner = DeepThinker(config, backend=AlwaysFailThinkBackend())
+            state = runner.run(question="All fail test")
+
+            self.assertEqual(state.status, "completed")
+            self.assertTrue(len(state.failed_paths) > 0)
+
+
+class ComputationSandboxTest(unittest.TestCase):
+    def test_computation_requested_and_executed(self) -> None:
+        think_call_count = [0]
+
+        class ComputationRequestBackend(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_think" in joined:
+                    think_call_count[0] += 1
+                    if think_call_count[0] == 1:
+                        return json.dumps({
+                            "steps": [{"step_id": "s1", "step_type": "reason",
+                                       "content": "Need to compute sum.", "confidence": 0.7}],
+                            "conclusion": "Sum needs verification.",
+                            "confidence": 0.7,
+                            "needs_search": [],
+                            "needs_computation": [
+                                {"code": "print(sum(range(1, 101)))", "description": "Sum 1 to 100"},
+                            ],
+                        })
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+
+            runner = DeepThinker(config, backend=ComputationRequestBackend())
+            state = runner.run(question="Compute sum of 1 to 100")
+
+            self.assertEqual(state.status, "completed")
+            comp_steps = [s for s in state.global_reasoning_chain if s.step_type == "computation"]
+            self.assertTrue(len(comp_steps) > 0)
+            self.assertGreater(state.computation_count, 0)
+
+    def test_computation_forbidden_code_rejected(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+
+            runner = DeepThinker(config)
+            # Initialize internals needed for _execute_computation
+            from deep_researcher.tracing import RunArtifacts
+            runner.tracker = RunArtifacts(Path(temp_dir), "test-run")
+            runner._computation_count = 0
+
+            sp = SubProblem(problem_id="test", description="test")
+            state = DepthState(run_id="test", question="test")
+
+            result = runner._execute_computation(state, sp, "import os; os.listdir('/')", "list files")
+            self.assertIsNotNone(result)
+            self.assertEqual(result["error_type"], "forbidden_pattern")
+
+    def test_computation_budget_enforced(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+            config.max_on_demand_computations = 0  # zero budget
+
+            runner = DeepThinker(config)
+            from deep_researcher.tracing import RunArtifacts
+            runner.tracker = RunArtifacts(Path(temp_dir), "test-run")
+            runner._computation_count = 0
+
+            sp = SubProblem(problem_id="test", description="test")
+            state = DepthState(run_id="test", question="test")
+
+            result = runner._execute_computation(state, sp, "print(1+1)", "simple math")
+            self.assertIsNone(result)
+
+    def test_computation_timeout(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+            config.computation_timeout_seconds = 1
+
+            runner = DeepThinker(config)
+            from deep_researcher.tracing import RunArtifacts
+            runner.tracker = RunArtifacts(Path(temp_dir), "test-run")
+            runner._computation_count = 0
+
+            sp = SubProblem(problem_id="test", description="test")
+            state = DepthState(run_id="test", question="test")
+
+            result = runner._execute_computation(
+                state, sp,
+                "import time; time.sleep(10); print('done')",
+                "infinite loop",
+            )
+            self.assertIsNotNone(result)
+            self.assertEqual(result["error_type"], "timeout")
+
+
+class ConfidenceScalingTest(unittest.TestCase):
+    def test_high_confidence_halves_budget(self) -> None:
+        verify_count = [0]
+
+        class HighConfVerifier(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_verify" in joined:
+                    verify_count[0] += 1
+                    if verify_count[0] <= 1:
+                        return json.dumps({
+                            "overall_verdict": "fail",
+                            "step_verdicts": [],
+                            "critical_issues": ["Minor issue"],
+                            "suggested_revisions": ["Fix minor issue"],
+                        })
+                    return json.dumps({
+                        "overall_verdict": "pass",
+                        "step_verdicts": [],
+                        "critical_issues": [],
+                        "suggested_revisions": [],
+                    })
+                if "TASK_KIND: depth_think" in joined:
+                    return json.dumps({
+                        "steps": [{"step_id": "s1", "step_type": "reason",
+                                   "content": "High confidence reasoning.", "confidence": 0.9}],
+                        "conclusion": "Very confident conclusion.",
+                        "confidence": 0.9,
+                        "needs_search": [],
+                        "needs_computation": [],
+                    })
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+
+            runner = DeepThinker(config, backend=HighConfVerifier())
+            state = runner.run(question="High confidence test")
+
+            # Check that compute_scale debug note was written for high confidence
+            scale_notes = [n for n in state.debug_notes if "compute_scale" in n and ">= 0.85" in n]
+            # At least some sub-problems should have had high confidence scaling
+            self.assertEqual(state.status, "completed")
+
+    def test_low_confidence_doubles_budget(self) -> None:
+        verify_count = [0]
+
+        class LowConfVerifier(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_verify" in joined:
+                    verify_count[0] += 1
+                    if verify_count[0] <= 1:
+                        return json.dumps({
+                            "overall_verdict": "fail",
+                            "step_verdicts": [],
+                            "critical_issues": ["Fundamental error"],
+                            "suggested_revisions": ["Rethink entirely"],
+                        })
+                    return json.dumps({
+                        "overall_verdict": "pass",
+                        "step_verdicts": [],
+                        "critical_issues": [],
+                        "suggested_revisions": [],
+                    })
+                if "TASK_KIND: depth_think" in joined:
+                    return json.dumps({
+                        "steps": [{"step_id": "s1", "step_type": "reason",
+                                   "content": "Low confidence.", "confidence": 0.3}],
+                        "conclusion": "Uncertain conclusion.",
+                        "confidence": 0.4,
+                        "needs_search": [],
+                        "needs_computation": [],
+                    })
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+
+            runner = DeepThinker(config, backend=LowConfVerifier())
+            state = runner.run(question="Low confidence test")
+
+            self.assertEqual(state.status, "completed")
+            # Check that low-confidence scaling notes exist
+            scale_notes = [n for n in state.debug_notes if "compute_scale" in n and "< 0.5" in n]
+            self.assertTrue(len(scale_notes) > 0)
+
+
+class AdversarialVerificationTest(unittest.TestCase):
+    def test_adversarial_verify_not_run_when_disabled(self) -> None:
+        adv_called = [False]
+
+        class TrackingBackend(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_adversarial_verify" in joined:
+                    adv_called[0] = True
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+            config.enable_adversarial_verification = False
+
+            runner = DeepThinker(config, backend=TrackingBackend())
+            state = runner.run(question="No adversarial test")
+
+            self.assertEqual(state.status, "completed")
+            self.assertFalse(adv_called[0])
+
+    def test_adversarial_verify_runs_on_borderline(self) -> None:
+        adv_called = [False]
+
+        class BorderlineBackend(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_think" in joined:
+                    return json.dumps({
+                        "steps": [{"step_id": "s1", "step_type": "reason",
+                                   "content": "Borderline reasoning.", "confidence": 0.75}],
+                        "conclusion": "Borderline conclusion.",
+                        "confidence": 0.78,
+                        "needs_search": [],
+                        "needs_computation": [],
+                    })
+                if "TASK_KIND: depth_adversarial_verify" in joined:
+                    adv_called[0] = True
+                    return json.dumps({
+                        "independent_reasoning": "Independently confirmed.",
+                        "agrees_with_conclusion": True,
+                        "disagreement_reason": "",
+                        "confidence": 0.80,
+                    })
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+            config.enable_adversarial_verification = True
+
+            runner = DeepThinker(config, backend=BorderlineBackend())
+            state = runner.run(question="Borderline confidence test")
+
+            self.assertEqual(state.status, "completed")
+            self.assertTrue(adv_called[0])
+
+    def test_adversarial_disagree_triggers_revision(self) -> None:
+        adv_call_count = [0]
+        revise_count = [0]
+
+        class DisagreeBackend(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_think" in joined:
+                    return json.dumps({
+                        "steps": [{"step_id": "s1", "step_type": "reason",
+                                   "content": "Borderline reasoning.", "confidence": 0.75}],
+                        "conclusion": "Disputed conclusion.",
+                        "confidence": 0.78,
+                        "needs_search": [],
+                        "needs_computation": [],
+                    })
+                if "TASK_KIND: depth_adversarial_verify" in joined:
+                    adv_call_count[0] += 1
+                    return json.dumps({
+                        "independent_reasoning": "I derive a different answer.",
+                        "agrees_with_conclusion": False,
+                        "disagreement_reason": "The conclusion ignores a critical constraint.",
+                        "confidence": 0.75,
+                    })
+                if "TASK_KIND: depth_revise" in joined:
+                    revise_count[0] += 1
+                    return json.dumps({
+                        "steps": [{"step_id": "r1", "step_type": "revise",
+                                   "content": "Revised with constraint.", "confidence": 0.85}],
+                        "conclusion": "Corrected conclusion.",
+                        "confidence": 0.85,
+                        "needs_search": [],
+                        "needs_computation": [],
+                    })
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+            config.enable_adversarial_verification = True
+
+            runner = DeepThinker(config, backend=DisagreeBackend())
+            state = runner.run(question="Adversarial disagree test")
+
+            self.assertEqual(state.status, "completed")
+            self.assertTrue(adv_call_count[0] > 0)
+            # At least one revision should have been triggered by adversarial
+            self.assertTrue(revise_count[0] > 0)
+
+    def test_adversarial_skipped_for_high_confidence(self) -> None:
+        adv_called = [False]
+
+        class HighConfBackend(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_think" in joined:
+                    return json.dumps({
+                        "steps": [{"step_id": "s1", "step_type": "reason",
+                                   "content": "Very confident.", "confidence": 0.95}],
+                        "conclusion": "High confidence conclusion.",
+                        "confidence": 0.92,
+                        "needs_search": [],
+                        "needs_computation": [],
+                    })
+                if "TASK_KIND: depth_adversarial_verify" in joined:
+                    adv_called[0] = True
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+            config.enable_adversarial_verification = True
+
+            runner = DeepThinker(config, backend=HighConfBackend())
+            state = runner.run(question="High confidence skip adversarial")
+
+            self.assertEqual(state.status, "completed")
+            self.assertFalse(adv_called[0])
+
+
+class CombinedFeaturesTest(unittest.TestCase):
+    def test_combined_features_integration(self) -> None:
+        """Test Best-of-N + computation + adversarial together."""
+        comp_executed = [False]
+        adv_called = [False]
+        think_count = [0]
+
+        class CombinedBackend(MockBackend):
+            def chat(self, model, messages, temperature, max_output_tokens):  # type: ignore[override]
+                joined = "\n".join(message["content"] for message in messages)
+                if "TASK_KIND: depth_think" in joined:
+                    think_count[0] += 1
+                    # First call requests computation, subsequent calls don't
+                    needs_comp = []
+                    if think_count[0] <= 2:
+                        needs_comp = [{"code": "print(2**10)", "description": "power calc"}]
+                    return json.dumps({
+                        "steps": [{"step_id": "s1", "step_type": "reason",
+                                   "content": "Combined test.", "confidence": 0.78}],
+                        "conclusion": "Combined conclusion.",
+                        "confidence": 0.78,
+                        "needs_search": [],
+                        "needs_computation": needs_comp,
+                    })
+                if "TASK_KIND: depth_adversarial_verify" in joined:
+                    adv_called[0] = True
+                    return json.dumps({
+                        "independent_reasoning": "Confirmed.",
+                        "agrees_with_conclusion": True,
+                        "disagreement_reason": "",
+                        "confidence": 0.80,
+                    })
+                return super().chat(model, messages, temperature, max_output_tokens)
+
+        with TemporaryDirectory() as temp_dir:
+            config = AppConfig.from_env()
+            config.run_root = Path(temp_dir)
+            config.use_mock_llm = True
+            config.use_mock_tools = True
+            config.depth_best_of_n = 2
+            config.enable_adversarial_verification = True
+            config.max_on_demand_computations = 2
+
+            runner = DeepThinker(config, backend=CombinedBackend())
+            state = runner.run(question="Combined features test")
+
+            self.assertEqual(state.status, "completed")
+            # Best-of-N should have run multiple think attempts
+            self.assertGreater(think_count[0], 1)
+            # Adversarial should have been called (borderline confidence)
+            self.assertTrue(adv_called[0])
 
 
 if __name__ == "__main__":

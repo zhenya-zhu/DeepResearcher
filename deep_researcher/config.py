@@ -111,6 +111,10 @@ class AppConfig:
     max_sub_problems: int = 6
     depth_confidence_threshold: float = 0.7
     max_on_demand_searches: int = 3
+    depth_best_of_n: int = 1
+    max_on_demand_computations: int = 2
+    computation_timeout_seconds: int = 30
+    enable_adversarial_verification: bool = False
     planner: ModelSelection = field(default_factory=lambda: ModelSelection(
         candidates=["anthropic--claude-4.6-sonnet", "gpt-5", "sonar-pro"],
         temperature=0.2,
@@ -191,6 +195,10 @@ class AppConfig:
             max_sub_problems=_env_int("DEEP_RESEARCHER_MAX_SUB_PROBLEMS", 6),
             depth_confidence_threshold=_env_float("DEEP_RESEARCHER_DEPTH_CONFIDENCE_THRESHOLD", 0.7),
             max_on_demand_searches=_env_int("DEEP_RESEARCHER_MAX_ON_DEMAND_SEARCHES", 3),
+            depth_best_of_n=_env_int("DEEP_RESEARCHER_DEPTH_BEST_OF_N", 1),
+            max_on_demand_computations=_env_int("DEEP_RESEARCHER_MAX_ON_DEMAND_COMPUTATIONS", 2),
+            computation_timeout_seconds=_env_int("DEEP_RESEARCHER_COMPUTATION_TIMEOUT_SECONDS", 30),
+            enable_adversarial_verification=_env_bool("DEEP_RESEARCHER_ENABLE_ADVERSARIAL_VERIFICATION", False),
         )
         config.planner = ModelSelection(
             candidates=_split_models(
