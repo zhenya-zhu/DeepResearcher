@@ -427,7 +427,6 @@ Writer 根据批评改
 | **Executive Summary** | 单独 LLM 调用，跨章节提炼要点 |
 | **章节 1-N** | 写-批-改 循环产出 |
 | **Conclusion** | LLM 生成 |
-| **Remaining Gaps** | 来自 Gap Review |
 | **Sources Used** | 自动提取 `[source:S0xx]` 引用 |
 | **Queried But Not Used** | 检索到但未引用 → 可审计性 |
 
@@ -519,6 +518,7 @@ Writer 根据批评改
 <div class="mt-4">
 
 - 多模型 + 自动 fallback：claude-4.6-sonnet → gpt-5 → sonar-pro
+- **Researcher 优先用 sonar-pro**（搜索增强 LLM，天然带引用）+ JSON 适配器
 - HAI Proxy (`localhost:6655`) 统一调用，16 RPM 限流
 
 </div>
@@ -599,7 +599,11 @@ DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher \
 - Depth & Reasoning
 - Evidence & Citations
 - Narrative Coherence
+- Tables & Comparisons
+- Paragraph Quality
+- Summary & Conclusion
 - Completeness
+- **Intellectual Honesty**（新增）
 
 </div>
 </div>

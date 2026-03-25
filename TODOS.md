@@ -19,6 +19,13 @@
 **Effort:** S (human: ~2 hrs / CC: ~15 min)
 **Depends on:** Depth mode (completed) + API-level changes in llm.py backends.
 
+## P2: Integrate depth_workflow.py with Sonar-Pro Researcher
+**What:** Update depth mode (`--mode depth`) to route its researcher to sonar-pro, matching the main workflow.
+**Why:** Depth mode currently hardcodes DDGRSearcher. Once the main workflow validates sonar-pro as researcher, depth mode should use the same approach for consistent evidence quality.
+**Context:** `depth_workflow.py` instantiates DDGRSearcher directly. Refactor to use the same model routing as the main workflow. Identified during CEO review (2026-03-25).
+**Effort:** S (human: ~2 hrs / CC: ~15 min)
+**Depends on:** Sonar-pro researcher validation in main workflow.
+
 ## P3: Depth Mode Evaluation Framework
 **What:** Add depth-specific scoring rubric to `evaluate.py` — assess logical coherence, reasoning chain quality, verification coverage.
 **Why:** Current evaluation is designed for survey reports. Depth reports need different quality metrics.
@@ -30,3 +37,10 @@
 **Why:** Throughput optimization. Sub-problems without dependencies are embarrassingly parallel.
 **Effort:** S (human: ~2 hrs / CC: ~15 min)
 **Depends on:** Depth mode (completed).
+
+## P3: Cross-Run Evaluation Tracking
+**What:** Add automated score history log that tracks composite scores across runs.
+**Why:** Currently each eval run is independent. A persistent log makes it easy to see score trends across experiments without manually maintaining TSV files like `results-llm-judge.tsv`.
+**Context:** Each run already outputs `METRIC:<score>`. Append to a `scores.jsonl` with timestamp, commit hash, config hash, and all dimension scores. Identified during CEO review (2026-03-25).
+**Effort:** S (human: ~2 hrs / CC: ~15 min)
+**Depends on:** Nothing — standalone enhancement.

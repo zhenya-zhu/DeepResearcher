@@ -74,11 +74,19 @@ class ReportValidationTest(unittest.TestCase):
             "## 产品线全景与各业务成长分析\n\n"
             "产品结构已经从单一逆变器扩展到储能。 [source:S002]\n\n"
             "## 综合投资结论\n\n"
-            "## Remaining Gaps\n\n"
-            "- 公司1997-2011年上市前的发展历程关键节点缺乏具体数据支撑\n"
+            "综合来看，公司具备较强的全球竞争力，增长逻辑清晰但风险需要关注。 [source:S003]\n\n"
+            "- 增长逻辑清晰\n"
+            "- 风险可控但需关注海外政策\n"
         )
         issues = self.runner._validate_report_completeness(self.state, report)
         self.assertEqual(issues, [])
+
+    def test_report_has_no_remaining_gaps_section(self) -> None:
+        """Regression: generated reports must not contain a Remaining Gaps section."""
+        self.state.global_gaps = ["Gap A", "Gap B"]
+        report = self.runner._fallback_report(self.state)
+        self.assertNotIn("## Remaining Gaps", report)
+        self.assertNotIn("Remaining Gaps", report)
 
 
 if __name__ == "__main__":
