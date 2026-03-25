@@ -1,12 +1,17 @@
 from typing import Dict, List, Optional
+import dataclasses
 import datetime as dt
 import json
 import re
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from urllib.parse import urlsplit
 
-from .config import AppConfig
+from .config import AppConfig, ModelSelection
 from .depth_prompts import (
+    build_depth_adversarial_verification_messages,
     build_depth_audit_messages,
     build_depth_decomposition_messages,
     build_depth_report_messages,
@@ -162,6 +167,7 @@ class DeepThinker:
         self.router: Optional[ModelRouter] = None
         self._state_lock = Lock()
         self._search_count = 0
+        self._computation_count = 0
 
     @property
     def run_dir(self) -> Optional[str]:
@@ -293,6 +299,35 @@ class DeepThinker:
         )
         self.tracker.checkpoint("thought", state)
 
+    def _think_attempt(
+        self,
+        state: DepthState,
+        sp: SubProblem,
+        dep_context: List[Dict[str, str]],
+        attempt_index: int,
+        temperature_offset: float,
+    ) -> Optional[Dict]:
+        assert self.router is not None
+        evidence = self._collect_evidence_for_sub_problem(state, sp)
+        messages = build_depth_thinking_messages(
+            state.question, sp, dep_context, evidence,
+        )
+        thinker = self.config.thinker
+        if temperature_offset != 0.0:
+            new_temp = max(0.0, min(1.0, thinker.temperature + temperature_offset))
+            thinker = dataclasses.replace(thinker, temperature=new_temp)
+        try:
+            model, payload = self.router.complete_json(
+                "depth-think-{0}-attempt-{1}".format(sp.problem_id, attempt_index),
+                messages, thinker,
+            )
+            return payload
+        except Exception as exc:
+            if self.tracker:
+                self.tracker.log("thinking", sp.problem_id, "Think attempt {0} failed".format(attempt_index),
+                                 level="WARN", data={"error": str(exc)})
+            return None
+
     def _think_sub_problem(
         self,
         state: DepthState,
@@ -302,23 +337,80 @@ class DeepThinker:
         assert self.router is not None
         assert self.tracker is not None
 
-        # Reason
-        evidence = self._collect_evidence_for_sub_problem(state, sp)
-        messages = build_depth_thinking_messages(
-            state.question, sp, dep_context, evidence,
-        )
-        try:
-            model, payload = self.router.complete_json(
-                "depth-think-{0}".format(sp.problem_id), messages, self.config.thinker,
-            )
-        except Exception as exc:
-            self.tracker.log("thinking", sp.problem_id, "Thinking failed",
-                             level="ERROR", data={"error": str(exc)})
+        # Best-of-N parallel generation
+        n = self.config.depth_best_of_n
+        payload = None
+        if n <= 1:
+            payload = self._think_attempt(state, sp, dep_context, 0, 0.0)
+        else:
+            offsets = [0.05 * i for i in range(n)]
+            futures = {}
+            with ThreadPoolExecutor(max_workers=min(n, 3)) as executor:
+                for i in range(n):
+                    future = executor.submit(
+                        self._think_attempt, state, sp, dep_context, i, offsets[i],
+                    )
+                    futures[future] = i
+
+            results = []
+            for future in as_completed(futures):
+                attempt_idx = futures[future]
+                try:
+                    result = future.result()
+                    if result:
+                        results.append((attempt_idx, result))
+                except Exception:
+                    pass
+
+            if results:
+                # Pick highest confidence
+                best_idx, payload = max(results, key=lambda x: x[1].get("confidence", 0.0))
+                state.debug_notes.append(
+                    "Best-of-{0}: picked attempt {1} (confidence {2:.2f}) from {3} successful attempts".format(
+                        n, best_idx, payload.get("confidence", 0.0), len(results),
+                    )
+                )
+                self.tracker.log("thinking", sp.problem_id, "Best-of-N selected",
+                                 data={"n": n, "best_attempt": best_idx, "successful": len(results),
+                                        "confidence": payload.get("confidence", 0.0)})
+
+        if payload is None:
             sp.status = "failed"
-            state.failed_paths.append("{0}: thinking failed — {1}".format(sp.problem_id, str(exc)[:200]))
+            state.failed_paths.append("{0}: all thinking attempts failed".format(sp.problem_id))
             return
 
         self._apply_thinking_result(sp, payload)
+
+        # On-demand computation if requested
+        needs_computation = payload.get("needs_computation", [])
+        computation_results = []
+        if needs_computation and self._computation_count < self.config.max_on_demand_computations:
+            for comp_req in needs_computation[:2]:
+                code = comp_req.get("code", "")
+                description = comp_req.get("description", "")
+                if code:
+                    result = self._execute_computation(state, sp, code, description)
+                    if result and "stdout" in result:
+                        computation_results.append(result)
+
+            if computation_results:
+                # Re-reason with computation results
+                comp_evidence = [
+                    {"source_id": "computation", "title": r["description"], "url": "", "excerpt": r["stdout"]}
+                    for r in computation_results
+                ]
+                evidence = self._collect_evidence_for_sub_problem(state, sp) + comp_evidence
+                messages = build_depth_thinking_messages(
+                    state.question, sp, dep_context, evidence,
+                )
+                try:
+                    model, payload = self.router.complete_json(
+                        "depth-think-{0}-with-computation".format(sp.problem_id), messages, self.config.thinker,
+                    )
+                    self._apply_thinking_result(sp, payload)
+                except Exception as exc:
+                    self.tracker.log("thinking", sp.problem_id, "Re-thinking with computation failed",
+                                     level="WARN", data={"error": str(exc)})
 
         # On-demand search if requested
         needs_search = payload.get("needs_search", [])
@@ -351,10 +443,73 @@ class DeepThinker:
 
         verdict = verification.get("overall_verdict", "uncertain")
         if verdict == "pass" and sp.confidence >= self.config.depth_confidence_threshold:
-            sp.status = "verified"
-            self.tracker.log("thinking", sp.problem_id, "Sub-problem verified",
-                             data={"confidence": sp.confidence})
-            return
+            # Adversarial re-derivation for borderline confidence
+            if (self.config.enable_adversarial_verification
+                    and sp.confidence < 0.85
+                    and sp.confidence >= self.config.depth_confidence_threshold):
+                adv_result = self._adversarial_verify(state, sp)
+                if adv_result and not adv_result.get("agrees_with_conclusion", True):
+                    self.tracker.log("thinking", sp.problem_id,
+                                     "Adversarial verifier disagrees, triggering revision",
+                                     data={"reason": adv_result.get("disagreement_reason", "")})
+                    # Convert adversarial disagreement to verification-like feedback
+                    adv_feedback = {
+                        "overall_verdict": "fail",
+                        "critical_issues": [adv_result.get("disagreement_reason", "Adversarial verifier disagrees")],
+                        "step_verdicts": [],
+                        "suggested_revisions": ["Address adversarial verifier's concern: {0}".format(
+                            adv_result.get("disagreement_reason", ""))],
+                    }
+                    if sp.revision_count < sp.max_revisions:
+                        sp.revision_count += 1
+                        sp.status = "revised"
+                        revision_result = self._revise(state, sp, adv_feedback)
+                        if revision_result:
+                            self._apply_thinking_result(sp, revision_result)
+                            re_verify = self._verify(state, sp)
+                            if re_verify and re_verify.get("overall_verdict") == "pass" and sp.confidence >= self.config.depth_confidence_threshold:
+                                sp.status = "verified"
+                                self.tracker.log("thinking", sp.problem_id,
+                                                 "Sub-problem verified after adversarial revision",
+                                                 data={"confidence": sp.confidence})
+                                return
+                    # Fall through to normal revision loop if adversarial revision didn't resolve
+                else:
+                    sp.status = "verified"
+                    self.tracker.log("thinking", sp.problem_id, "Sub-problem verified (adversarial agrees)",
+                                     data={"confidence": sp.confidence})
+                    return
+            else:
+                sp.status = "verified"
+                self.tracker.log("thinking", sp.problem_id, "Sub-problem verified",
+                                 data={"confidence": sp.confidence})
+                return
+
+        # Confidence-based compute scaling for revisions
+        revision_thinker: Optional[ModelSelection] = None
+        urgency = ""
+        base_tokens = self.config.thinker.max_output_tokens
+        if sp.confidence >= 0.85:
+            revision_thinker = dataclasses.replace(
+                self.config.thinker,
+                max_output_tokens=max(1000, base_tokens // 2),
+            )
+            state.debug_notes.append(
+                "compute_scale: {0} confidence={1:.2f} >= 0.85, halved tokens to {2}".format(
+                    sp.problem_id, sp.confidence, revision_thinker.max_output_tokens,
+                )
+            )
+        elif sp.confidence < 0.5:
+            revision_thinker = dataclasses.replace(
+                self.config.thinker,
+                max_output_tokens=min(32000, base_tokens * 2),
+            )
+            urgency = "Take extra care: consider alternative approaches, verify each step rigorously."
+            state.debug_notes.append(
+                "compute_scale: {0} confidence={1:.2f} < 0.5, doubled tokens to {2}, urgency injected".format(
+                    sp.problem_id, sp.confidence, revision_thinker.max_output_tokens,
+                )
+            )
 
         # Revise loop
         while sp.revision_count < sp.max_revisions:
@@ -363,7 +518,8 @@ class DeepThinker:
             self.tracker.log("thinking", sp.problem_id, "Revising sub-problem",
                              data={"revision": sp.revision_count, "verdict": verdict})
 
-            revision_result = self._revise(state, sp, verification)
+            revision_result = self._revise(state, sp, verification,
+                                           thinker_override=revision_thinker, urgency=urgency)
             if not revision_result:
                 break
 
@@ -474,9 +630,38 @@ class DeepThinker:
                              level="ERROR", data={"error": str(exc)})
             return None
 
+    # -- Adversarial Re-Derivation --
+
+    def _adversarial_verify(self, state: DepthState, sp: SubProblem) -> Optional[Dict]:
+        assert self.router is not None
+        assert self.tracker is not None
+        messages = build_depth_adversarial_verification_messages(state.question, sp)
+        try:
+            model, payload = self.router.complete_json(
+                "depth-adversarial-verify-{0}".format(sp.problem_id),
+                messages, self.config.verifier,
+            )
+            adv_step = ThinkingStep(
+                step_id="adversarial-{0}".format(sp.problem_id),
+                step_type="adversarial_verify",
+                content="Agrees: {0}. Reason: {1}".format(
+                    payload.get("agrees_with_conclusion", True),
+                    payload.get("disagreement_reason", "") or "none",
+                ),
+                confidence=payload.get("confidence", 0.0),
+                verification_result="pass" if payload.get("agrees_with_conclusion", True) else "fail",
+            )
+            state.global_reasoning_chain.append(adv_step)
+            return payload
+        except Exception as exc:
+            self.tracker.log("thinking", sp.problem_id, "Adversarial verification failed",
+                             level="ERROR", data={"error": str(exc)})
+            return None
+
     # -- Revise --
 
-    def _revise(self, state: DepthState, sp: SubProblem, verification: Dict) -> Optional[Dict]:
+    def _revise(self, state: DepthState, sp: SubProblem, verification: Dict,
+                thinker_override: Optional[ModelSelection] = None, urgency: str = "") -> Optional[Dict]:
         assert self.router is not None
         assert self.tracker is not None
         steps_data = [
@@ -489,12 +674,12 @@ class DeepThinker:
             for step in sp.thinking_steps
         ]
         messages = build_depth_revision_messages(
-            state.question, sp, steps_data, verification,
+            state.question, sp, steps_data, verification, urgency=urgency,
         )
         try:
             model, payload = self.router.complete_json(
                 "depth-revise-{0}-r{1}".format(sp.problem_id, sp.revision_count),
-                messages, self.config.thinker,
+                messages, thinker_override or self.config.thinker,
             )
 
             # Handle on-demand search from revision
@@ -510,6 +695,76 @@ class DeepThinker:
             self.tracker.log("thinking", sp.problem_id, "Revision failed",
                              level="ERROR", data={"error": str(exc)})
             return None
+
+    # -- Computation sandbox --
+
+    _FORBIDDEN_PATTERNS = [
+        "import os", "import subprocess", "import sys", "import shutil",
+        "import socket", "import ctypes", "import signal",
+        "open(", "exec(", "eval(", "__import__", "__builtins__",
+        "os.system", "os.popen", "os.exec",
+    ]
+
+    def _execute_computation(
+        self, state: DepthState, sp: SubProblem, code: str, description: str,
+    ) -> Optional[Dict[str, str]]:
+        assert self.tracker is not None
+        if self._computation_count >= self.config.max_on_demand_computations:
+            self.tracker.log("computation", sp.problem_id, "Computation budget exhausted",
+                             level="WARN", data={"count": self._computation_count})
+            return None
+
+        # Validate against forbidden patterns
+        code_lower = code.lower()
+        for pattern in self._FORBIDDEN_PATTERNS:
+            if pattern.lower() in code_lower:
+                self.tracker.log("computation", sp.problem_id, "Forbidden code pattern",
+                                 level="WARN", data={"pattern": pattern, "code": code[:200]})
+                return {"error_type": "forbidden_pattern", "stderr": "Blocked: {0}".format(pattern), "suggestion": "Remove forbidden import/call"}
+
+        self._computation_count += 1
+        state.computation_count = self._computation_count
+
+        wrapper = (
+            "import math, statistics, decimal, fractions, itertools, functools, collections, operator\n"
+            "{0}\n"
+        ).format(code)
+
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", wrapper],
+                capture_output=True,
+                timeout=self.config.computation_timeout_seconds,
+                text=True,
+                env={},
+            )
+        except subprocess.TimeoutExpired:
+            self.tracker.log("computation", sp.problem_id, "Computation timed out",
+                             level="WARN", data={"timeout": self.config.computation_timeout_seconds})
+            return {"error_type": "timeout", "stderr": "Execution timed out after {0}s".format(self.config.computation_timeout_seconds), "suggestion": "Simplify the computation"}
+        except OSError as exc:
+            self.tracker.log("computation", sp.problem_id, "Computation unavailable",
+                             level="WARN", data={"error": str(exc)})
+            return None
+
+        stdout = (result.stdout or "")[:2000]
+        stderr = (result.stderr or "")[:500]
+
+        comp_step = ThinkingStep(
+            step_id="computation-{0}-{1}".format(sp.problem_id, self._computation_count),
+            step_type="computation",
+            content="Computation: {0}\nResult: {1}".format(description, stdout[:200] if stdout else "no output"),
+        )
+        state.global_reasoning_chain.append(comp_step)
+
+        if result.returncode != 0:
+            self.tracker.log("computation", sp.problem_id, "Computation failed",
+                             level="WARN", data={"returncode": result.returncode, "stderr": stderr[:200]})
+            return {"error_type": "runtime_error", "stderr": stderr, "suggestion": "Fix the code error"}
+
+        self.tracker.log("computation", sp.problem_id, "Computation completed",
+                         data={"chars": len(stdout), "description": description[:100]})
+        return {"stdout": stdout, "description": description}
 
     # -- On-demand search --
 
