@@ -312,38 +312,43 @@ DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher --mode depth --qu
 
 ## 模型角色分工
 
-| 角色 | 用途 | 默认模型候选 | 温度 |
-|------|------|-------------|------|
-| Planner | 设计研究计划 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.2 |
-| Researcher | 分析证据、提炼论点 | **sonar-pro**, claude-4.6-sonnet, gpt-5 | 0.2 |
-| Writer | 撰写报告章节 | claude-4.6-sonnet, gpt-5, opus | 0.2 |
-| Verifier | 缺口审查、批评、审计 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.0 |
-| Fast | 轻量任务 | claude-4.5-haiku, gpt-5-mini, sonar | 0.1 |
+| 角色 | 用途 | 默认模型候选 | 温度 | max_output_tokens |
+|------|------|-------------|------|-------------------|
+| Planner | 设计研究计划 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.2 | 8000 |
+| Researcher | 分析证据、提炼论点 | **sonar-pro**, claude-4.6-sonnet, gpt-5 | 0.2 | 5000 |
+| Writer | 撰写报告章节 | claude-4.6-sonnet, gpt-5, opus | 0.2 | 12000 |
+| Verifier | 缺口审查、批评、审计 | claude-4.6-sonnet, gpt-5, sonar-pro | **0.0** | 8000 |
+| Fast | 轻量任务 | claude-4.5-haiku, gpt-5-mini, sonar | 0.1 | 1000 |
+| Thinker | Depth Mode 推理/修正 | **opus**, claude-4.6-sonnet, gpt-5 | 0.3 | **16000** |
 
 通过 HAI Proxy (`localhost:6655/litellm/v1`) 调用，带速率限制（16 RPM）。
 
 > **Researcher 角色说明：** Researcher 优先使用 sonar-pro（Perplexity 的搜索增强 LLM），因为它返回带内联引用的响应，天然适合研究任务。当 sonar-pro 返回非 JSON 格式时，通过 `sonar_adapter.py` 将自然语言响应映射为标准研究 JSON schema，并将 Sonar 引用的 URL 注册为真实的 `SourceRecord`。
+
+> **Thinker 角色说明：** Thinker 是 Depth Mode 独有角色，使用 16K max_output_tokens 支持长推理链。默认 Opus-first 配置以获得最佳推理质量。配合 Best-of-N 并行生成时，每个 attempt 使用不同温度偏移（+0.05 × attempt_index）增加多样性。
 
 ## 核心源文件
 
 | 文件 | 说明 | 大致行数 |
 |------|------|---------|
 | `deep_researcher/__main__.py` | 入口 | - |
-| `deep_researcher/cli.py` | CLI 参数解析 | ~440 |
-| `deep_researcher/config.py` | 配置管理（AppConfig） | ~233 |
-| `deep_researcher/state.py` | 数据结构（ResearchState, DepthState, SectionState, SourceRecord） | ~350+ |
-| `deep_researcher/workflow.py` | Breadth Mode 编排引擎（DeepResearcher 类） | ~2000+ |
-| `deep_researcher/depth_workflow.py` | Depth Mode 编排引擎（DeepThinker 类） | ~700+ |
+| `deep_researcher/cli.py` | CLI 参数解析 | ~360 |
+| `deep_researcher/config.py` | 配置管理（AppConfig） | ~270 |
+| `deep_researcher/state.py` | 数据结构（ResearchState, DepthState, SectionState, SourceRecord） | ~325 |
+| `deep_researcher/workflow.py` | Breadth Mode 编排引擎（DeepResearcher 类） | ~2300 |
+| `deep_researcher/depth_workflow.py` | Depth Mode 编排引擎（DeepThinker 类），含 Best-of-N / 计算沙箱 / 对抗性验证 | ~1030 |
 | `deep_researcher/prompts.py` | Breadth Mode LLM Prompt 模板 | ~676 |
-| `deep_researcher/depth_prompts.py` | Depth Mode LLM Prompt 模板（7 个 builder） | ~400+ |
-| `deep_researcher/llm.py` | LLM 后端实现（OpenAI/Anthropic 兼容） | ~300+ |
+| `deep_researcher/depth_prompts.py` | Depth Mode LLM Prompt 模板（8 个 builder，含 adversarial） | ~400+ |
+| `deep_researcher/llm.py` | LLM 后端实现（OpenAI/Anthropic 兼容 + Mock + 多模型路由） | ~805 |
 | `deep_researcher/search.py` | 网页搜索（DuckDuckGo）与 HTML 抓取 | ~550+ |
 | `deep_researcher/semantic_registry.py` | 证据画像与来源包注册表 | ~115 |
 | `deep_researcher/tracing.py` | 日志、检查点与 HTML Trace 生成 | ~250+ |
 | `deep_researcher/workspace_sources.py` | 本地文件发现与证据选取 | ~250+ |
 | `deep_researcher/json_utils.py` | JSON 提取与修复工具 | ~96 |
 | `deep_researcher/sonar_adapter.py` | Sonar-pro 非 JSON 响应适配器 | ~130 |
-| `evaluate.py` | 评估框架（结构指标 + LLM 9 维评分） | ~400+ |
+| `deep_researcher/model_capabilities.py` | 模型上下文窗口推断 | ~50 |
+| `deep_researcher/rate_limit.py` | RPM 速率限制 | ~35 |
+| `evaluate.py` | 评估框架（结构指标 + LLM 9 维评分 + Composite Score） | ~370 |
 
 ## 状态管理与检查点
 
@@ -430,7 +435,7 @@ runs/{run_id}/
 
 **结构指标**（无需 LLM）：字数、章节数、表格数、引用数、唯一来源数、段落数
 
-**LLM 评分**（需 API）：
+**LLM 评分**（需 API，9 维度）：
 - Structure & Organization (0-10)
 - Depth & Reasoning (0-10)
 - Evidence & Citations (0-10)
@@ -439,7 +444,12 @@ runs/{run_id}/
 - Paragraph Quality (0-10)
 - Executive Summary & Conclusion (0-10)
 - Completeness (0-10)
-- Intellectual Honesty (0-10) — 置信度是否匹配证据强度，有证据支撑的论断是否自信陈述，推断是否与直接证据区分
+- **Intellectual Honesty (0-10)** — 置信度是否匹配证据强度，有证据支撑的论断是否自信陈述，推断是否与直接证据区分
+
+**Composite Score 公式：**
+- LLM 评分占 **60%**（9 维平均）
+- 结构指标占 **25%**（字数、章节、表格、引用归一化加权）
+- 语义匹配占 **15%**（关键词覆盖率）
 
 > 评估使用动态分母：支持 8 维（旧版）和 9 维（含 Intellectual Honesty）结果，向后兼容。
 
@@ -467,6 +477,11 @@ runs/{run_id}/
 - **多语言查询归一化**：中文停用词去除、CJK/Latin 分词
 - **网络模式自动检测**：proxy/direct 自适应，按域名缓存最优模式
 - **Semantic Registry**：证据画像 + 来源包机制，将高层需求映射为具体检索策略
+- **Aletheia-Inspired Depth 增强**（来自 arxiv 2602.10177v3）：
+  - **Best-of-N 并行生成**：对每个子问题同时探索 N 条推理路径，选最优
+  - **计算沙箱**：Thinker 可调用 Python 做数值验证，带安全沙箱
+  - **对抗性重推导**：Verifier 独立推导结论（不看推理链），对比发现逻辑漏洞
+  - **置信度驱动缩放**：难题放宽输出上限（防截断）+ urgency 提示注入，简单题收紧上限省成本
 
 ---
 
@@ -481,10 +496,11 @@ Depth Mode 是受 Google Gemini DeepThink 启发的深度推理模式，通过**
 ### 四阶段流水线
 
 ```
-┌───────────┐    ┌─────────────────────────────┐    ┌───────────┐    ┌───────┐
-│ Decompose  │ →  │      Think Loop              │ →  │ Synthesize │ →  │ Audit │
-│ (分解子问题)│    │ (推理→验证→修正，按拓扑序)     │    │ (章节+总览) │    │(质检)  │
-└───────────┘    └─────────────────────────────┘    └───────────┘    └───────┘
+┌───────────┐    ┌──────────────────────────────────────────────┐    ┌───────────┐    ┌───────┐
+│ Decompose  │ →  │              Think Loop                      │ →  │ Synthesize │ →  │ Audit │
+│ (分解子问题)│    │ Best-of-N→Compute→Search→Verify→Adversarial  │    │ (章节+总览) │    │(质检)  │
+│            │    │            →Revise（按拓扑序）                 │    │           │    │       │
+└───────────┘    └──────────────────────────────────────────────┘    └───────────┘    └───────┘
 ```
 
 ### 1. Decompose（问题分解）
@@ -506,33 +522,87 @@ Planner LLM 将复杂问题分解为多个子问题（最多 `max_sub_problems` 
 
 **入口：** [`_think_loop()`](../deep_researcher/depth_workflow.py)
 
-按拓扑序逐一处理每个子问题，每个子问题经历：
+按拓扑序逐一处理每个子问题，每个子问题经历完整的 Think → Search/Compute → Verify → (Adversarial) → Revise 流程。
 
-**Step 2a — Reason（推理）**
+#### Step 2a — Reason（推理）+ Best-of-N 并行生成
+
+**入口：** [`_think_sub_problem()`](../deep_researcher/depth_workflow.py#L368)
+
 - Thinker LLM（高输出 16K tokens）生成推理链：`steps[]`（每步含 step_type/content/confidence）+ `conclusion` + `confidence`
 - 若推理中需要外部事实，LLM 可通过 `needs_search` 字段触发按需搜索
+- 若推理中需要数值验证，LLM 可通过 `needs_computation` 字段触发计算沙箱
 
-**Step 2b — On-Demand Search（按需搜索）**
+**Best-of-N 并行生成**（[`_think_sub_problem()`](../deep_researcher/depth_workflow.py#L377)，来自 Aletheia 论文）：
+- 当 `depth_best_of_n > 1` 时，对每个子问题同时启动 N 个 Think 请求（`ThreadPoolExecutor`，最多 3 workers）
+- 每个 attempt 使用不同的温度偏移（`+0.05 × attempt_index`）增加多样性
+- 所有 attempt 完成后，选择 `confidence` 最高的成功结果
+- 默认 `depth_best_of_n = 1`（单次），设置为 2-3 可提升质量（LLM 成本线性增加）
+
+> **为什么做 Best-of-N？** 来自 Aletheia 论文（"Towards Autonomous Mathematics Research", arxiv 2602.10177v3）的关键发现：单路径推理是脆弱的——一个错误步骤会污染整条链。并行探索多条推理路径，然后选择最优，显著提高了复杂推理的可靠性。
+
+#### Step 2b — On-Demand Computation（按需计算沙箱）
+
+**入口：** [`_execute_computation()`](../deep_researcher/depth_workflow.py#L745)
+
+- 仅在推理返回 `needs_computation` 时执行
+- 最多 `max_on_demand_computations` 次（默认 2）
+- 使用 `subprocess` 执行 Python 代码，严格安全控制：
+  - **禁止模式列表**（[`_FORBIDDEN_PATTERNS`](../deep_researcher/depth_workflow.py#L738)）：`import os`, `import subprocess`, `open(`, `exec(`, `__import__` 等
+  - **空环境**：`env={}` 无环境变量泄露
+  - **超时**：默认 30 秒（`computation_timeout_seconds`）
+  - **预导入白名单**：`math, statistics, decimal, fractions, itertools, functools, collections, operator`
+- 计算结果注入为证据，Thinker 重新推理以整合数值验证
+
+> **为什么加计算沙箱？** Depth Mode 推理公式推导时无法做数值验证。例如煤化工成本模型中，模型推导出临界油价公式但无法计算具体数值。计算沙箱让 Thinker 能"算一算"验证推导是否正确。
+
+#### Step 2c — On-Demand Search（按需搜索）
+
+**入口：** [`_on_demand_search()`](../deep_researcher/depth_workflow.py#L808)
+
 - 仅在推理请求时执行，最多 `max_on_demand_searches` 次（默认 3）
-- **相关性过滤**（[`_snippet_relevance()`](../deep_researcher/depth_workflow.py)）：搜索词与标题/摘要的重叠度 < 15% 的结果被跳过，防止注册不相关来源
+- **相关性过滤**（[`_snippet_relevance()`](../deep_researcher/depth_workflow.py#L77)）：搜索词与标题/摘要的重叠度 < 15% 的结果被跳过，防止注册不相关来源
 - **内容验证**：页面抓取后再次检查内容相关性
 - 搜索后重新推理，将证据注入推理上下文
 
-**Step 2c — Verify（验证）**
+#### Step 2d — Verify（验证）
+
+**入口：** [`_verify()`](../deep_researcher/depth_workflow.py#L629)
+
 - Verifier LLM 检查推理链：逻辑错误、不支持的假设、循环论证
 - 返回 `overall_verdict`（pass/fail）+ 每步的 `step_verdicts`
 - 通过且 confidence ≥ `depth_confidence_threshold`（0.7） → 标记 "verified"
 
-**Step 2d — Revise（修正）**
+#### Step 2e — Adversarial Re-Derivation（对抗性重新推导）
+
+**入口：** [`_adversarial_verify()`](../deep_researcher/depth_workflow.py#L672)
+
+- 仅当 `enable_adversarial_verification = True` 且 confidence 处于 **边界区间**（0.7 ≤ confidence < 0.85）时触发
+- Verifier 独立重新推导结论（不看推理链），然后对比原始结论
+- 如果不同意（`agrees_with_conclusion: false`），触发额外修正轮次
+- 修正后重新验证；通过则标记 "verified"，否则进入正常修正循环
+
+> **为什么做对抗性验证？** Aletheia 发现"解耦推理模型的最终输出与其中间思考 token，使模型能识别其最初忽略的缺陷"。标准 Verifier 看到完整推理链时容易被说服，对抗性验证只看结论和关键论断，独立推导后对比，能发现更深层的逻辑问题。
+
+#### Step 2f — Revise（修正）+ 置信度驱动计算缩放
+
+**入口：** [`_revise()`](../deep_researcher/depth_workflow.py#L700)
+
 - 验证未通过时，Thinker LLM 根据验证反馈修正推理
 - 最多 `max_depth_revisions` 次（默认 3）
+- **置信度驱动计算缩放**（[depth_workflow.py:525-549](../deep_researcher/depth_workflow.py#L525)）：
+  - confidence ≥ 0.85 → 输出上限**减半**（easy problem，节省 API 成本）
+  - confidence < 0.5 → 输出上限**翻倍**（hard problem，最高 32K，防止长推理链被截断）+ 注入 urgency 提示（`"Take extra care: consider alternative approaches, verify each step rigorously."`）要求更严谨推理
+  - 0.5 ≤ confidence < 0.85 → 使用默认上限
 - 修正仍未通过 → 标记 "failed"，记入 `failed_paths`
+
+> **为什么做置信度驱动缩放？** `max_output_tokens` 只是输出上限，不能强制 LLM 输出更多内容。翻倍的真正作用是**防截断**：困难子问题的推理链可能很长，16K 不够时会被截断。真正影响 LLM 推理行为的是 **urgency 提示注入**——告诉模型"这道题很难，要更谨慎"。减半则为简单问题节省 API 成本。
 
 **收敛策略：** 有界迭代 + 回溯。最多 `max_depth_iterations`（5）个子问题，每个最多 3 次修正，confidence 阈值 0.7。
 
 **Prompt：**
 - 推理：[`build_depth_thinking_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_think`
 - 验证：[`build_depth_verification_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_verify`
+- 对抗性验证：[`build_depth_adversarial_verification_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_adversarial_verify`
 - 修正：[`build_depth_revision_messages()`](../deep_researcher/depth_prompts.py) — TASK_KIND: `depth_revise`
 
 ### 3. Synthesize Report（报告合成）
@@ -570,29 +640,33 @@ Planner LLM 将复杂问题分解为多个子问题（最多 `max_sub_problems` 
 - `global_reasoning_chain: List[ThinkingStep]` — 全局推理链
 - `failed_paths: List[str]` — 失败路径记录
 - `sources`, `report_markdown`, `audit_issues`
+- `debug_notes: List[str]` — 调试信息（Best-of-N 选择、置信度缩放决策等）
+- `computation_count: int` — 计算沙箱调用次数
 
 **SubProblem**：
 - `problem_id`, `description`, `dependencies`
-- `status` — "pending" → "thinking" → "verified" / "failed"
+- `status` — "pending" → "thinking" → "verified" / "failed" / "revised"
 - `thinking_steps: List[ThinkingStep]` — 推理步骤
 - `conclusion`, `confidence`
+- `search_queries_used: List[str]` — 执行过的搜索查询
 - `revision_count`, `max_revisions`
 
 **ThinkingStep**：
-- `step_id`, `step_type` — "decompose" / "reason" / "verify" / "revise" / "search_request"
+- `step_id`, `step_type` — "decompose" / "reason" / "verify" / "revise" / "search_request" / "computation" / "adversarial_verify"
 - `content`, `confidence`
 - `verification_result` — "pass" / "fail" / "uncertain"
+- `verification_notes` — 验证结论的详细说明
 
 ### Depth Mode 模型角色
 
 | 角色 | 用途 | 默认模型候选 | 温度 | max_output_tokens |
 |------|------|-------------|------|-------------------|
-| Planner | 问题分解 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.2 | 5000 |
-| Thinker | 推理/修正 | claude-4.6-sonnet, gpt-5, claude-4.6-opus | 0.3 | **16000** |
-| Verifier | 验证/审计 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.0 | 5000 |
-| Writer | 报告撰写 | claude-4.6-sonnet, gpt-5, opus | 0.2 | 5000 |
+| Planner | 问题分解 | claude-4.6-sonnet, gpt-5, sonar-pro | 0.2 | 8000 |
+| Thinker | 推理/修正 | **claude-4.6-opus**, claude-4.6-sonnet, gpt-5 | 0.3 | **16000** |
+| Verifier | 验证/审计/对抗性验证 | claude-4.6-sonnet, gpt-5, sonar-pro | **0.0** | 8000 |
+| Writer | 报告撰写 | claude-4.6-sonnet, gpt-5, opus | 0.2 | 12000 |
 
-> Thinker 角色使用 16K max_output_tokens 以支持长推理链。推荐 Sonnet-first 配置以避免 Opus 超时。
+> Thinker 角色默认 Opus-first，以获得最佳深度推理质量。配合 Best-of-N 时每个 attempt 使用不同温度偏移增加多样性。Verifier 同时承担标准验证和对抗性重推导两种任务。
 
 ### Depth Mode 配置
 
@@ -604,7 +678,11 @@ Planner LLM 将复杂问题分解为多个子问题（最多 `max_sub_problems` 
 | `DEEP_RESEARCHER_MAX_SUB_PROBLEMS` | 最大分解子问题数 | 6 |
 | `DEEP_RESEARCHER_DEPTH_CONFIDENCE_THRESHOLD` | 验证通过的置信度阈值 | 0.7 |
 | `DEEP_RESEARCHER_MAX_ON_DEMAND_SEARCHES` | 最大按需搜索次数 | 3 |
-| `DEEP_RESEARCHER_THINKER_MODELS` | Thinker 角色模型候选 | claude-4.6-sonnet,gpt-5,claude-4.6-opus |
+| `DEEP_RESEARCHER_DEPTH_BEST_OF_N` | Best-of-N 并行生成路径数 | 1（禁用，设 2-3 启用） |
+| `DEEP_RESEARCHER_MAX_ON_DEMAND_COMPUTATIONS` | 最大计算沙箱调用次数 | 2 |
+| `DEEP_RESEARCHER_COMPUTATION_TIMEOUT_SECONDS` | 计算沙箱超时 | 30 |
+| `DEEP_RESEARCHER_ENABLE_ADVERSARIAL_VERIFICATION` | 启用对抗性重新推导 | `false` |
+| `DEEP_RESEARCHER_THINKER_MODELS` | Thinker 角色模型候选 | claude-4.6-opus,claude-4.6-sonnet,gpt-5 |
 | `DEEP_RESEARCHER_THINKER_TEMPERATURE` | Thinker 温度 | 0.3 |
 | `DEEP_RESEARCHER_THINKER_MAX_OUTPUT_TOKENS` | Thinker 最大输出 | 16000 |
 
@@ -612,9 +690,9 @@ Planner LLM 将复杂问题分解为多个子问题（最多 `max_sub_problems` 
 
 | 文件 | 说明 |
 |------|------|
-| `deep_researcher/depth_workflow.py` | DeepThinker 编排引擎（分解→推理→验证→修正→合成） |
-| `deep_researcher/depth_prompts.py` | Depth Mode 所有阶段的 Prompt 模板（7 个 message builder） |
-| `tests/test_depth_workflow.py` | Depth Mode 测试套件（19 个测试） |
+| `deep_researcher/depth_workflow.py` | DeepThinker 编排引擎（分解→推理→验证→对抗性验证→修正→计算→合成），含 Best-of-N 并行生成、计算沙箱、置信度驱动缩放 |
+| `deep_researcher/depth_prompts.py` | Depth Mode 所有阶段的 Prompt 模板（8 个 message builder，含 adversarial_verify） |
+| `tests/test_depth_workflow.py` | Depth Mode 测试套件 |
 
 ### Depth Mode 报告格式
 
