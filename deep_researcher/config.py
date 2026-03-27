@@ -85,7 +85,7 @@ class AppConfig:
     network_mode: str = "auto"
     mode: str = "breadth"  # "breadth" | "depth"
     semantic_mode: str = "hybrid"
-    timeout_seconds: int = 120
+    timeout_seconds: int = 300
     rpm_limit: int = 16
     max_rounds: int = 3
     max_sections: int = 7
@@ -158,7 +158,7 @@ class AppConfig:
             network_mode=_env_choice("DEEP_RESEARCHER_NETWORK_MODE", "auto", ["auto", "proxy", "direct"]),
             mode=_env_choice("DEEP_RESEARCHER_MODE", "breadth", ["breadth", "depth"]),
             semantic_mode=_env_choice("DEEP_RESEARCHER_SEMANTIC_MODE", "hybrid", ["hybrid", "native"]),
-            timeout_seconds=_env_int("DEEP_RESEARCHER_TIMEOUT_SECONDS", 120),
+            timeout_seconds=_env_int("DEEP_RESEARCHER_TIMEOUT_SECONDS", 300),
             rpm_limit=_env_int("DEEP_RESEARCHER_RPM_LIMIT", 16),
             max_rounds=_env_int("DEEP_RESEARCHER_MAX_ROUNDS", 3),
             max_sections=_env_int("DEEP_RESEARCHER_MAX_SECTIONS", 7),

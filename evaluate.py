@@ -183,16 +183,33 @@ def llm_judge_score(report_text: str, reference_text: str) -> dict:
 
 def compute_semantic_coverage(report_text: str, reference_text: str) -> float:
     """Keyword-based topic coverage score (0-100). No LLM needed."""
-    # Extract key topics from reference by finding repeated meaningful phrases
-    ref_words = set(re.findall(r'[\w\u4e00-\u9fff]{2,}', reference_text.lower()))
-    rep_words = set(re.findall(r'[\w\u4e00-\u9fff]{2,}', report_text.lower()))
-    # Filter to words that appear multiple times in reference (likely topics)
+    def _extract_terms(text: str) -> set:
+        """Extract meaningful terms: Latin words (3+ chars) and CJK bigrams."""
+        terms = set()
+        # Latin/digit words
+        for word in re.findall(r'[a-zA-Z0-9]{3,}', text.lower()):
+            terms.add(word)
+        # CJK bigrams (overlapping pairs)
+        cjk_chars = re.findall(r'[\u4e00-\u9fff]', text)
+        for i in range(len(cjk_chars) - 1):
+            terms.add(cjk_chars[i] + cjk_chars[i + 1])
+        return terms
+
+    ref_terms = _extract_terms(reference_text)
+    rep_terms = _extract_terms(report_text)
+    # Filter to terms that appear multiple times in reference (likely topics)
     from collections import Counter
-    ref_counter = Counter(re.findall(r'[\w\u4e00-\u9fff]{2,}', reference_text.lower()))
-    topic_words = {word for word, count in ref_counter.items() if count >= 3 and len(word) >= 3}
+    ref_all = []
+    for word in re.findall(r'[a-zA-Z0-9]{3,}', reference_text.lower()):
+        ref_all.append(word)
+    cjk_chars = re.findall(r'[\u4e00-\u9fff]', reference_text)
+    for i in range(len(cjk_chars) - 1):
+        ref_all.append(cjk_chars[i] + cjk_chars[i + 1])
+    ref_counter = Counter(ref_all)
+    topic_words = {word for word, count in ref_counter.items() if count >= 3}
     if not topic_words:
         return 100.0  # no topics to check
-    covered = topic_words & rep_words
+    covered = topic_words & rep_terms
     return round(len(covered) / len(topic_words) * 100, 1)
 
 

@@ -90,7 +90,20 @@ def _without_proxy_env():
 
 
 def extract_relevant_passages(text: str, query: str, max_passages: int = 3, max_chars: int = 2200) -> str:
-    terms = [token.lower() for token in re.findall(r"\w+", query) if len(token) > 2]
+    # Generic terms that inflate relevance scores on unrelated content
+    _GENERIC = {
+        "能够", "取代", "哪些", "哪一些", "什么", "为什么", "如何", "怎么",
+        "多少", "是否", "可以", "需要", "包括", "进行", "具有", "通过",
+        "以及", "其中", "这些", "那些", "已经", "目前", "当前", "未来",
+        "分析", "报告", "研究", "评估", "情况", "相关",
+        "what", "which", "where", "when", "how", "why", "about",
+        "analysis", "report", "research", "overview", "current",
+        "some", "many", "most", "other", "also",
+    }
+    raw_terms = [token.lower() for token in re.findall(r"\w+", query) if len(token) > 2]
+    terms = [t for t in raw_terms if t not in _GENERIC]
+    if not terms:
+        terms = raw_terms  # fallback if all terms were generic
     paragraphs = [block.strip() for block in re.split(r"\n{2,}", text) if block.strip()]
     scored = []
     for paragraph in paragraphs:
