@@ -18,7 +18,49 @@ Breadth（广度搜索） + Depth（深度推理）
 
 自动生成长篇研究报告
 
-记得录屏
+---
+
+# 目录
+
+<div class="grid grid-cols-2 gap-8 mt-4 text-sm">
+<div>
+
+### 一、引言
+- 为什么做这个？
+- 两种研究模式
+- 核心理念对比
+
+### 二、流水线概览
+- Breadth 流水线（5 阶段）
+- Depth 流水线（4 阶段 + Aletheia）
+- 实例：煤化工 × Breadth / Depth
+
+### 三、Breadth 深潜
+- 规划阶段
+- 搜索基础设施
+- 迭代搜索循环
+- Cross-Section Synthesis
+
+</div>
+<div>
+
+### 四、Depth 深潜
+- 分解阶段
+- Think → Verify → Revise 循环
+- 按需搜索 + 计算沙箱
+- 推理链结构化输出
+- 引用防伪造 / Aletheia 增强
+
+### 五、对比
+- 质控 / 报告生成 / 资源使用
+
+### 六、工程实现
+- 模型角色 / 架构 / 检查点 / 运行示例
+
+### 七、评估与总结
+
+</div>
+</div>
 
 ---
 layout: center
@@ -367,13 +409,14 @@ layout: center
 </v-click>
 
 ---
+layout: center
+---
 
-# Stage 1: 规划阶段
+# Breadth 深潜
 
-<div class="grid grid-cols-2 gap-6 mt-4">
-<div>
+---
 
-### Breadth: 章节规划
+# Breadth: 规划阶段
 
 **把模糊问题变成结构化研究地图**
 
@@ -386,29 +429,9 @@ layout: center
 
 </v-clicks>
 
-</div>
-<div>
-
-### Depth: 子问题分解
-
-**把复杂问题拆解为依赖图**
-
-<v-clicks>
-
-- Planner LLM 输出 **4-6 个子问题**
-- 每个子问题带：描述 + 依赖列表
-- **拓扑排序**确保先解决基础问题
-- `problem_analysis` + `reasoning_approach`
-
-</v-clicks>
-
-</div>
-</div>
-
 <v-click>
 
-<div class="grid grid-cols-2 gap-4 mt-3 text-xs">
-<div>
+<div class="mt-4 text-xs">
 
 ```json
 // Breadth: sections + queries + evidence
@@ -423,25 +446,6 @@ layout: center
 ]}
 ```
 
-</div>
-<div>
-
-```json
-// Depth: sub_problems + dependencies
-{"sub_problems": [
-  {"id": "product-taxonomy",
-   "description": "煤化工能替代哪些产品",
-   "dependencies": []},
-  {"id": "tech-routes",
-   "description": "主要技术路线及成本结构",
-   "dependencies": ["product-taxonomy"]},
-  {"id": "breakeven-price",
-   "description": "各产品的临界油价",
-   "dependencies": ["tech-routes"]}
-]}
-```
-
-</div>
 </div>
 
 </v-click>
@@ -534,6 +538,88 @@ After:  "煤化工 替代 石油化工 技术路线"
 
 ---
 
+# Breadth: Cross-Section Synthesis
+
+**防止信息孤岛**
+
+<div class="mt-4 text-sm">
+
+| 检测项 | 说明 |
+|-------|------|
+| **contradictions** | 章节 A 说"前景广阔"，章节 B 说"严重障碍" |
+| **overlaps** | 章节 A 和 C 重复讨论市场规模 |
+| **cross_cutting_themes** | 监管风险影响所有章节 |
+| **context_brief** | 给每个 Writer 的上下文提示 |
+
+</div>
+
+<v-click>
+
+<div class="mt-6">
+
+- 让 Writer 写每章时感知其他章节上下文 → **内在一致**的报告
+- **容错**：失败时跳过，不阻塞写作
+
+</div>
+
+</v-click>
+
+<v-click>
+
+<div class="mt-4">
+
+> Depth 模式不需要 Synthesis — 子问题通过**依赖图**天然有序，结论自动传递给下游子问题
+
+</div>
+
+</v-click>
+
+---
+layout: center
+---
+
+# Depth 深潜
+
+---
+
+# Depth: 分解阶段
+
+**把复杂问题拆解为依赖图**
+
+<v-clicks>
+
+- Planner LLM 输出 **4-6 个子问题**
+- 每个子问题带：描述 + 依赖列表
+- **拓扑排序**确保先解决基础问题
+- `problem_analysis` + `reasoning_approach`
+
+</v-clicks>
+
+<v-click>
+
+<div class="mt-4 text-xs">
+
+```json
+// Depth: sub_problems + dependencies
+{"sub_problems": [
+  {"id": "product-taxonomy",
+   "description": "煤化工能替代哪些产品",
+   "dependencies": []},
+  {"id": "tech-routes",
+   "description": "主要技术路线及成本结构",
+   "dependencies": ["product-taxonomy"]},
+  {"id": "breakeven-price",
+   "description": "各产品的临界油价",
+   "dependencies": ["tech-routes"]}
+]}
+```
+
+</div>
+
+</v-click>
+
+---
+
 # Depth: Think → Verify → Revise 循环
 
 **越想越深，自我纠错（+ Aletheia 增强）**
@@ -580,28 +666,27 @@ After:  "煤化工 替代 石油化工 技术路线"
 <div class="grid grid-cols-2 gap-6 mt-4">
 <div>
 
-### Breadth: 搜索为主
-
-- 每章节 3-4 条查询
-- 每条查询 3 种变体
-- 最多 3 轮迭代
-- **总搜索量：30-50 次**
-- 链接跟踪：可信度 ≥ 0.8 的前 3 条（⚠️ 阈值可能过严）
-
-</div>
-<div>
-
-### Depth: 搜索 + 计算为辅
+### 按需搜索（最少搜索原则）
 
 - 推理过程中**按需触发**
 - 模型说 `needs_search` 才搜
 - 最多 3 次搜索（硬上限）
-- **总搜索量：0-3 次**
-- 模型说 `needs_computation` → **Python 沙箱**
-- 最多 2 次计算（安全沙箱）
+- **总搜索量：0-3 次**（⚠️ 搜索模块尚有问题，实际应更多）
 - **相关性过滤**：
   - snippet 相关度 ≥ 0.15
   - 正文相关度 ≥ 0.10
+
+</div>
+<div>
+
+### 计算沙箱
+
+- 模型说 `needs_computation` → **Python 沙箱**
+- 最多 2 次计算
+- 安全沙箱：禁止 os/subprocess/open/exec
+- 预装白名单：math, statistics, decimal...
+- 结果注入推理链做数值验证
+- 💡 未来可替换为 WASM 沙箱（更强隔离）
 
 </div>
 </div>
@@ -610,7 +695,7 @@ After:  "煤化工 替代 石油化工 技术路线"
 
 <div class="mt-4">
 
-> Depth 模式的搜索是 **"我需要一个事实"**，计算是 **"我需要验证一个公式"** — 都是推理的辅助工具
+> 搜索是 **"我需要一个事实"**，计算是 **"我需要验证一个公式"** — 都是推理的辅助工具
 
 </div>
 
@@ -667,46 +752,6 @@ After:  "煤化工 替代 石油化工 技术路线"
 > 与 Breadth 的 `thesis + findings` 不同，Depth 输出的是**推理过程**，不只是结论
 
 </v-click>
-
-</div>
-</div>
-
----
-
-# 质控机制对比
-
-<div class="grid grid-cols-2 gap-6 mt-4 text-sm">
-<div class="border-l-4 border-blue-400 pl-4">
-
-### Breadth: 三层质控
-
-**1. Gap Review（研究阶段）**
-- Verifier 打分 0-5，`sufficiency < 3.5` → 继续搜索
-
-**2. Write-Critique-Revise（写作阶段）**
-- 独立 Verifier 打分 1-10，< 8 → 触发修改
-
-**3. Audit（终审）**
-- 无支撑论断 / 弱引用 / 缺失内容
-
-</div>
-<div class="border-l-4 border-green-400 pl-4">
-
-### Depth: 三层质控
-
-**1. Verify-Revise（推理阶段）**
-- 逐步检查：逻辑错误 / 循环论证 / 跳步
-- 失败 → 最多 3 次修正（上限缩放 + urgency）
-
-**2. Adversarial Re-Derivation（可选）**
-- 边界 confidence (0.7-0.85) 触发
-- 只传结论，隐藏推理链 → 独立推导 → 对比
-- 防止 Verifier 被推理链逐步说服
-
-**3. Audit（终审）**
-- 逻辑一致性 + 引用真实性 + 子问题覆盖
-
-> Depth: 标准验证 + 对抗验证 + 终审
 
 </div>
 </div>
@@ -814,83 +859,6 @@ After:  "煤化工 替代 石油化工 技术路线"
 
 ---
 
-# Cross-Section Synthesis
-
-**Breadth 模式独有 — 防止信息孤岛**
-
-<div class="mt-4 text-sm">
-
-| 检测项 | 说明 |
-|-------|------|
-| **contradictions** | 章节 A 说"前景广阔"，章节 B 说"严重障碍" |
-| **overlaps** | 章节 A 和 C 重复讨论市场规模 |
-| **cross_cutting_themes** | 监管风险影响所有章节 |
-| **context_brief** | 给每个 Writer 的上下文提示 |
-
-</div>
-
-<v-click>
-
-<div class="mt-6">
-
-- 让 Writer 写每章时感知其他章节上下文 → **内在一致**的报告
-- **容错**：失败时跳过，不阻塞写作
-
-</div>
-
-</v-click>
-
-<v-click>
-
-<div class="mt-4">
-
-> Depth 模式不需要 Synthesis — 子问题通过**依赖图**天然有序，结论自动传递给下游子问题
-
-</div>
-
-</v-click>
-
----
-
-# 报告生成对比
-
-<div class="grid grid-cols-2 gap-6 mt-2 text-sm">
-<div>
-
-### Breadth: 写-批-改 循环
-
-| 部分 | 生成方式 |
-|------|---------|
-| 标题 | LLM 生成（全局视角） |
-| Executive Summary | 单独 LLM 调用 |
-| 章节 1-N | Write → Critique → Revise |
-| Conclusion | LLM 生成 |
-| Sources Used | 自动提取 `[source:S0xx]` |
-| Not Used | 检索到但未引用 |
-
-每章节独立写，Verifier 独立打分 < 8 → 修改
-
-</div>
-<div>
-
-### Depth: 逐子问题报告
-
-| 部分 | 生成方式 |
-|------|---------|
-| Problem Analysis | 来自 Decompose 阶段 |
-| Sub-Problem 1-N | 每个子问题单独章节 |
-| Failed Approaches | 被否定的推理路径 |
-| Synthesis | 跨子问题综合结论 |
-| Sources | **只列实际引用的来源** |
-| Searched Not Cited | 搜到但未引用 |
-
-**特色：Failed Approaches 章节** — 展示模型的思考和纠错过程
-
-</div>
-</div>
-
----
-
 # Depth: 结构化输出示例
 
 **从推理链到报告**
@@ -922,32 +890,93 @@ Verify: ✅ PASS
 </v-click>
 
 ---
+layout: center
+---
 
-# 模型角色对比
+# 对比
 
-<div class="text-sm mt-4">
+---
 
-| 角色 | Breadth 中 | Depth 中 | 温度 | 输出上限 |
-|------|-----------|---------|------|---------|
-| **Planner** | 设计章节 + 搜索查询 | 分解子问题 + 依赖图 | 0.2 | 8K |
-| **Researcher** | 分析证据、提炼论点 | — | 0.2 | 5K |
-| **Thinker** | — | 深度推理链 + Best-of-N | 0.3 | **16K** |
-| **Writer** | 撰写章节 Markdown | 撰写章节 Markdown | 0.2 | 12K |
-| **Verifier** | Gap Review + Critique + Audit | Verify + Adversarial + Audit | **0.0** | 8K |
-| **Fast** | 轻量任务 | — | 0.1 | 1K |
+# 质控机制对比
 
+<div class="grid grid-cols-2 gap-6 mt-4 text-sm">
+<div class="border-l-4 border-blue-400 pl-4">
+
+### Breadth: 三层质控
+
+**1. Gap Review（研究阶段）**
+- Verifier 打分 0-5，`sufficiency < 3.5` → 继续搜索
+
+**2. Write-Critique-Revise（写作阶段）**
+- 独立 Verifier 打分 1-10，< 8 → 触发修改
+
+**3. Audit（终审）**
+- 无支撑论断 / 弱引用 / 缺失内容
+
+</div>
+<div class="border-l-4 border-green-400 pl-4">
+
+### Depth: 三层质控
+
+**1. Verify-Revise（推理阶段）**
+- 逐步检查：逻辑错误 / 循环论证 / 跳步
+- 失败 → 最多 3 次修正（上限缩放 + urgency）
+
+**2. Adversarial Re-Derivation（可选）**
+- 边界 confidence (0.7-0.85) 触发
+- 只传结论，隐藏推理链 → 独立推导 → 对比
+- 防止 Verifier 被推理链逐步说服
+
+**3. Audit（终审）**
+- 逻辑一致性 + 引用真实性 + 子问题覆盖
+
+> Depth: 标准验证 + 对抗验证 + 终审
+
+</div>
+</div>
+
+---
+
+# 报告生成对比
+
+<div class="grid grid-cols-2 gap-6 mt-2 text-sm">
+<div>
+
+### Breadth: LLM 直接写文章
+
+| 部分 | 生成方式 |
+|------|---------|
+| 标题 | LLM 生成（全局视角） |
+| Executive Summary | 单独 LLM 调用 |
+| 章节 1-N | Write → Critique → Revise |
+| Conclusion | LLM 生成 |
+| Sources Used | 自动提取 `[source:S0xx]` |
+| Not Used | 检索到但未引用 |
+
+Writer 从 evidence 直接写散文，质量靠**写→批→改**循环兜底
+
+</div>
+<div>
+
+### Depth: 推理链 → 格式化输出
+
+| 部分 | 生成方式 |
+|------|---------|
+| Problem Analysis | 来自 Decompose 阶段 |
+| Sub-Problem 1-N | 每个子问题单独章节 |
+| Failed Approaches | 被否定的推理路径 |
+| Synthesis | 跨子问题综合结论 |
+| Sources | **只列实际引用的来源** |
+| Searched Not Cited | 搜到但未引用 |
+
+质量在 Think→Verify→Revise 阶段已保证，报告只是推理链的**格式化**
+
+</div>
 </div>
 
 <v-click>
 
-<div class="mt-4 text-sm">
-
-- **Thinker** 是 Depth 模式独有角色 — 默认 **Opus-first**，需要长输出（16K tokens）来展开推理链
-- 多模型 + 自动 fallback：claude-4.6-opus → claude-4.6-sonnet → gpt-5
-- HAI Proxy (`localhost:6655`) 统一调用，16 RPM 限流
-- 置信度缩放：hard → 32K 上限 + urgency 提示注入, easy → 8K 上限省成本
-
-</div>
+> **本质区别**：Breadth 的质量在写作阶段产生（写→批→改），Depth 的质量在推理阶段产生（想→验→改），报告只是呈现
 
 </v-click>
 
@@ -980,77 +1009,6 @@ Verify: ✅ PASS
 
 ---
 
-# 容错设计对比
-
-<div class="text-sm">
-
-| 阶段 | Breadth Fallback | Depth Fallback |
-|------|-----------------|----------------|
-| 规划/分解 | LLM 超时 → 通用 4 章节模板 | LLM 超时 → 单子问题 = 原问题 |
-| 研究/推理 | LLM 分析失败 → 启发式 findings | Best-of-N 全失败 → 标记 failed path |
-| 搜索 | 零结果 → 查询变体（最多 3 种） | 搜索失败 → 跳过，继续推理 |
-| 计算 | — | 沙箱超时/错误 → 跳过，继续推理 |
-| 综合 | LLM 失败 → 跳过 Synthesis | 所有子问题失败 → 输出失败分析报告 |
-| 写作 | 截断/失败 → 验证→重试→结构化草稿 | 章节生成失败 → 用结论直接填充 |
-| 审计 | Verifier 失败 → 记录通用问题 | Verifier 失败 → 记录通用问题 |
-
-</div>
-
-<v-click>
-
-<div class="mt-4 text-center">
-
-> **两种模式共同原则：宁可输出一份"够用"的报告，也不因某个环节失败而崩溃**
-
-</div>
-
-</v-click>
-
----
-
-# Depth 测试结果 + Aletheia 增强前后
-
-**问题：** 煤化工能够取代石油化工的哪一些产物？在什么价格上能够取代？
-
-<div class="grid grid-cols-2 gap-6 mt-4 text-sm">
-<div>
-
-### V1 测试（基础 Depth）
-- ⏱️ 总时长：45 分钟
-- 🧩 子问题：6 个
-- ✅ 验证通过：3 个
-- ❌ 修正后失败：2 个
-- ⏹️ 达到迭代上限：1 个
-- 🔍 按需搜索：3 次
-- 📄 报告长度：~550 行
-
-</div>
-<div>
-
-### Aletheia 增强（已实现）
-- **Best-of-N**: 并行探索多条推理路径
-- **计算沙箱**: 数值验证成本公式
-- **对抗性验证**: 边界 confidence 独立推导
-- **置信度缩放**: 困难子问题 → 更多 token
-- Think → Verify → Revise 循环验证有效：
-  - 主动否定斜率 8.5 简化模型
-  - 修正为 16.54 联产品抵扣模型
-
-</div>
-</div>
-
-<v-click>
-
-<div class="mt-2">
-
-> V1 验证了推理循环的价值；Aletheia 增强让复杂推理更可靠（Best-of-N 防止单路径脆弱、计算沙箱防止公式错误）
-
-</div>
-
-</v-click>
-
----
-
 # 同一问题，两种模式的差异
 
 <div class="text-sm mt-2">
@@ -1073,6 +1031,42 @@ Verify: ✅ PASS
 <div class="mt-4 text-center">
 
 > **互补而非替代** — 用 Breadth 做全景扫描，用 Depth 深入核心问题
+
+</div>
+
+</v-click>
+
+---
+layout: center
+---
+
+# 工程实现
+
+---
+
+# 模型角色对比
+
+<div class="text-sm mt-4">
+
+| 角色 | Breadth 中 | Depth 中 | 温度 | 输出上限 |
+|------|-----------|---------|------|---------|
+| **Planner** | 设计章节 + 搜索查询 | 分解子问题 + 依赖图 | 0.2 | 8K |
+| **Researcher** | 分析证据、提炼论点 | — | 0.2 | 5K |
+| **Thinker** | — | 深度推理链 + Best-of-N | 0.3 | **16K** |
+| **Writer** | 撰写章节 Markdown | 撰写章节 Markdown | 0.2 | 12K |
+| **Verifier** | Gap Review + Critique + Audit | Verify + Adversarial + Audit | **0.0** | 8K |
+| **Fast** | 轻量任务 | — | 0.1 | 1K |
+
+</div>
+
+<v-click>
+
+<div class="mt-4 text-sm">
+
+- **Thinker** 是 Depth 模式独有角色 — 默认 **Opus-first**，需要长输出（16K tokens）来展开推理链
+- 多模型 + 自动 fallback：claude-4.6-opus → claude-4.6-sonnet → gpt-5
+- HAI Proxy (`localhost:6655`) 统一调用，16 RPM 限流
+- 置信度缩放：hard → 32K 上限 + urgency 提示注入, easy → 8K 上限省成本
 
 </div>
 
@@ -1125,52 +1119,41 @@ plan  research   decompose think synthesize
 
 ---
 
-# 数据结构对比
+# 检查点与输出
 
 <div class="grid grid-cols-2 gap-4 text-xs mt-2">
 <div>
 
-### Breadth: ResearchState
+### Breadth
 
-```python
-@dataclass
-class ResearchState:
-    sections: List[SectionState]
-    # 每个 section 有:
-    #   queries, findings, thesis,
-    #   evidence_sufficiency,
-    #   gap_tasks, draft_text
-    searched_results: List[SearchResult]
-    sources: Dict[str, SourceRecord]
-    current_round: int
-    report_markdown: str
-```
-
-重心：**章节 × 搜索结果 × 证据**
+| 文件 | 说明 |
+|------|------|
+| `report.md` | 最终研究报告 |
+| `plan.md` / `plan.json` | 章节规划（人读/机读） |
+| `trace.html` | 可视化执行时间线 |
+| `checkpoints/planned.json` | 规划完成快照 |
+| `checkpoints/round-N.json` | 第 N 轮搜索后快照 |
+| `checkpoints/final.json` | 完整状态快照 |
+| `sources/` | 抓取的网页原文 |
+| `artifacts/` | 中间产物（章节草稿等） |
+| `events.jsonl` | 全量事件日志 |
 
 </div>
 <div>
 
-### Depth: DepthState
+### Depth
 
-```python
-@dataclass
-class DepthState:
-    sub_problems: List[SubProblem]
-    # 每个 SubProblem 有:
-    #   thinking_steps, conclusion,
-    #   confidence, revision_count,
-    #   source_ids, search_queries_used
-    problem_graph: Dict[str, List[str]]
-    verification_summary: str
-    failed_paths: List[str]
-    debug_notes: List[str]  # Aletheia 决策日志
-    computation_count: int  # 沙箱调用次数
-    sources: Dict[str, SourceRecord]
-    report_markdown: str
-```
-
-重心：**子问题 × 推理链 × 验证 × 计算**
+| 文件 | 说明 |
+|------|------|
+| `report.md` | 最终深度分析报告 |
+| `plan.json` | 子问题分解 + 依赖图 |
+| `trace.html` | 可视化执行时间线 |
+| `checkpoints/decomposed.json` | 分解完成快照 |
+| `checkpoints/thinking-{id}.json` | 子问题推理完成快照 |
+| `checkpoints/final.json` | 完整状态快照 |
+| `sources/` | 按需搜索抓取的网页 |
+| `artifacts/section-{id}.md` | 每个子问题的章节 |
+| `events.jsonl` | 全量事件日志 |
 
 </div>
 </div>
@@ -1178,62 +1161,6 @@ class DepthState:
 <v-click>
 
 <div class="mt-2 text-sm">
-
-> 独立状态类，共享 `SourceRecord` — 组合优于继承
-
-</div>
-
-</v-click>
-
----
-
-# 检查点与输出
-
-<div class="grid grid-cols-2 gap-4 text-sm mt-2">
-<div>
-
-### Breadth
-
-```
-runs/{run_id}/
-├── report.md
-├── plan.md / plan.json
-├── trace.html
-├── checkpoints/
-│   ├── planned.json
-│   ├── round-1.json
-│   └── final.json
-├── sources/
-├── artifacts/
-└── events.jsonl
-```
-
-</div>
-<div>
-
-### Depth
-
-```
-runs/{run_id}/
-├── report.md
-├── plan.json
-├── trace.html
-├── checkpoints/
-│   ├── decomposed.json
-│   ├── thinking-{id}.json
-│   └── final.json
-├── sources/
-├── artifacts/
-│   └── section-{id}.md
-└── events.jsonl
-```
-
-</div>
-</div>
-
-<v-click>
-
-<div class="mt-2">
 
 两种模式都支持 `--resume checkpoints/xxx.json` → 跳过已完成的阶段
 
@@ -1261,6 +1188,12 @@ DEEP_RESEARCHER_API_KEY=<key> uv run python -m deep_researcher \
 --resume runs/.../checkpoints/round-1.json      # 从检查点恢复
 --mock                                          # Mock 模式测试
 ```
+
+---
+layout: center
+---
+
+# 评估与总结
 
 ---
 
@@ -1364,6 +1297,59 @@ class: text-center
 
 </div>
 </div>
+
+---
+
+# 这个项目是怎么做的
+
+<div class="grid grid-cols-4 gap-4 mt-8 text-sm">
+<div class="border-2 border-purple-400 rounded-lg p-4 text-center">
+
+**1. 研究**
+
+Gemini Deep Research
+
+研究 "Deep Research" 本身，输出行业调研报告
+
+</div>
+<div class="border-2 border-blue-400 rounded-lg p-4 text-center">
+
+**2. 规划 + 编码**
+
+Claude Code + gstack
+
+架构设计、代码编写、code review
+
+</div>
+<div class="border-2 border-green-400 rounded-lg p-4 text-center">
+
+**3. 自动优化**
+
+Auto Research 循环
+
+Gemini 报告作为 baseline，自动评估→调参→再评估
+
+</div>
+<div class="border-2 border-orange-400 rounded-lg p-4 text-center">
+
+**4. 展示**
+
+Slidev
+
+Markdown → PPT
+
+</div>
+</div>
+
+<v-click>
+
+<div class="mt-8 text-center">
+
+> **用 AI 研究 AI Research，用 AI 写代码，用 AI 优化质量**
+
+</div>
+
+</v-click>
 
 ---
 layout: center
