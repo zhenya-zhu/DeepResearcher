@@ -7,25 +7,25 @@
       "pattern": "anthropic--claude-4.",
       "match": "prefix",
       "family": "claude-4.x",
-      "context_window_tokens": 200000,
+      "context_window_tokens": 1000000,
       "source_url": "https://docs.anthropic.com/en/docs/models-overview",
-      "notes": "Local Anthropic-compatible gateway alias mapped to Claude 4.x standard context window."
+      "notes": "Local Anthropic-compatible gateway alias mapped to Claude 4.x extended context window."
     },
     {
       "pattern": "claude-sonnet-4",
       "match": "prefix",
       "family": "claude-4.x",
-      "context_window_tokens": 200000,
+      "context_window_tokens": 1000000,
       "source_url": "https://docs.anthropic.com/en/docs/models-overview",
-      "notes": "Standard Claude 4.x context window."
+      "notes": "Claude 4.x extended context window."
     },
     {
       "pattern": "claude-opus-4",
       "match": "prefix",
       "family": "claude-4.x",
-      "context_window_tokens": 200000,
+      "context_window_tokens": 1000000,
       "source_url": "https://docs.anthropic.com/en/docs/models-overview",
-      "notes": "Standard Claude 4.x context window."
+      "notes": "Claude 4.x extended context window."
     },
     {
       "pattern": "gpt-5-chat",
@@ -47,7 +47,7 @@
       "pattern": "gpt-5",
       "match": "prefix",
       "family": "gpt-5",
-      "context_window_tokens": 400000,
+      "context_window_tokens": 1000000,
       "source_url": "https://platform.openai.com/docs/models/gpt-5",
       "notes": "OpenAI GPT-5 and GPT-5 mini profile."
     },
@@ -87,7 +87,7 @@
       "pattern": "sonar-pro",
       "match": "prefix",
       "family": "sonar-pro",
-      "context_window_tokens": 200000,
+      "context_window_tokens": 1000000,
       "source_url": "https://docs.perplexity.ai/docs/getting-started/models/models/sonar-pro",
       "notes": "Perplexity Sonar Pro profile."
     },

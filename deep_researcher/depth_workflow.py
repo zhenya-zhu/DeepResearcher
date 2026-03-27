@@ -77,18 +77,87 @@ def _score_source_credibility(url: str, title: str) -> float:
 def _snippet_relevance(query: str, title: str, snippet: str) -> float:
     """Score how relevant a search result is to the query (0.0-1.0).
 
-    Uses term overlap between query and (title + snippet).
+    Uses term overlap between query and (title + snippet), filtering out
+    generic/stopword terms that inflate scores for irrelevant results.
+    CJK text is segmented into bigrams since we have no word segmenter.
     """
-    # Tokenize query into meaningful terms (2+ chars)
-    q_terms = set(
-        t.lower() for t in re.findall(r"[\w\u4e00-\u9fff]+", query)
-        if len(t) >= 2
-    )
+    # Generic terms that match broadly but don't indicate topical relevance
+    _GENERIC_TERMS = {
+        # Chinese stopwords / generic query words (bigrams)
+        "能够", "取代", "哪些", "什么", "为什", "什么", "如何", "怎么",
+        "多少", "是否", "可以", "需要", "包括", "进行", "具有", "通过",
+        "以及", "其中", "这些", "那些", "已经", "目前", "当前", "未来",
+        "分析", "报告", "研究", "评估", "情况", "布局", "优势", "劣势",
+        "技术", "原理", "进展", "发展", "探索", "实现", "综述", "概述",
+        "介绍", "背景", "现状", "趋势", "前景", "方向", "方案", "特点",
+        "比较", "对比", "总结", "梳理", "解读", "详解", "深度", "全面",
+        "最新", "主要", "核心", "关键", "重要", "相关", "一些", "哪一",
+        "价格",
+        # English generic terms
+        "what", "which", "where", "when", "how", "why", "that", "this",
+        "these", "those", "can", "could", "would", "should", "about",
+        "analysis", "report", "research", "overview", "current", "latest",
+        "detail", "details", "some", "many", "most", "other", "also",
+        "price", "cost",
+    }
+
+    def _tokenize(text: str) -> set:
+        """Extract terms: Latin words + CJK bigrams."""
+        tokens = set()
+        # Latin/digit words (2+ chars)
+        for word in re.findall(r"[a-zA-Z0-9]+", text):
+            if len(word) >= 2:
+                tokens.add(word.lower())
+        # CJK bigrams (overlapping)
+        cjk_chars = re.findall(r"[\u4e00-\u9fff]", text)
+        for i in range(len(cjk_chars) - 1):
+            tokens.add(cjk_chars[i] + cjk_chars[i + 1])
+        return tokens
+
+    q_terms = _tokenize(query)
+    # Remove generic terms to focus on topical keywords
+    q_terms -= _GENERIC_TERMS
     if not q_terms:
-        return 0.5  # can't evaluate
+        # All terms were generic; fall back to raw terms
+        q_terms = _tokenize(query)
+        if not q_terms:
+            return 0.5  # can't evaluate
     combined = (title + " " + snippet).lower()
-    matched = sum(1 for t in q_terms if t in combined)
+    combined_terms = _tokenize(combined)
+    matched = len(q_terms & combined_terms)
     return matched / len(q_terms)
+
+
+def _compact_search_query(query: str) -> List[str]:
+    """Generate search-engine-friendly query variants from potentially verbose CJK queries.
+
+    Returns up to 3 variants, from most specific to broadest.
+    """
+    # Strip years that confuse search engines
+    stripped = re.sub(r"(19|20)\d{2}[\-~年]?\s*", "", query).strip()
+    # Extract CJK chunks (sequences of CJK characters) and Latin words
+    cjk_chunks = re.findall(r"[\u4e00-\u9fff]+", stripped)
+    latin_words = [w for w in re.findall(r"[a-zA-Z]{2,}", stripped)]
+    # Filter out generic CJK chunks (single chars or common words)
+    _GENERIC_CJK = {
+        "中国", "统计", "数据", "最新", "进展", "技术", "分析", "报告",
+        "及", "和", "的", "在", "是", "了", "有",
+    }
+    meaningful_cjk = [c for c in cjk_chunks if len(c) >= 2 and c not in _GENERIC_CJK]
+
+    variants = []
+    # Variant 1: All meaningful terms
+    all_terms = meaningful_cjk + latin_words
+    if all_terms:
+        variants.append(" ".join(all_terms[:5]))
+    # Variant 2: Key technical terms only (first 3)
+    if len(all_terms) > 2:
+        variants.append(" ".join(all_terms[:3]))
+    # Variant 3: Original query if very different from variants
+    compact = re.sub(r"\s+", " ", stripped).strip()
+    if compact and (not variants or compact not in variants):
+        variants.append(compact[:60])
+    return variants or [query[:60]]
 
 
 def _topological_sort(sub_problems: List[SubProblem]) -> List[SubProblem]:
@@ -782,20 +851,38 @@ class DeepThinker:
         )
         state.global_reasoning_chain.append(search_step)
 
-        try:
-            hits = self.searcher.search(query, limit=self.config.max_results_per_query)
-        except Exception as exc:
-            self.tracker.log("search", sp.problem_id, "On-demand search failed",
-                             level="WARN", data={"query": query, "error": str(exc)})
-            return
+        # Try multiple query variants for better search results
+        query_variants = _compact_search_query(query)
+        all_hits = []
+        executed_query = query
+        for variant in query_variants:
+            try:
+                hits = self.searcher.search(variant, limit=self.config.max_results_per_query)
+            except Exception as exc:
+                self.tracker.log("search", sp.problem_id, "Search variant failed",
+                                 level="DEBUG", data={"variant": variant, "error": str(exc)})
+                continue
+            if hits:
+                # Check if any hits pass relevance filter using the ORIGINAL query
+                has_relevant = any(
+                    _snippet_relevance(query, h.title, h.snippet) >= 0.15
+                    for h in hits[:6]
+                )
+                if has_relevant:
+                    all_hits = hits
+                    executed_query = variant
+                    break
+                elif not all_hits:
+                    all_hits = hits
+                    executed_query = variant
 
-        if not hits:
-            self.tracker.log("search", sp.problem_id, "On-demand search returned 0 results",
-                             data={"query": query})
+        if not all_hits:
+            self.tracker.log("search", sp.problem_id, "On-demand search returned 0 results across all variants",
+                             data={"query": query, "variants": query_variants})
             return
 
         accepted = 0
-        for hit in hits[:6]:
+        for hit in all_hits[:6]:
             # Relevance filter: snippet must share terms with query
             relevance = _snippet_relevance(query, hit.title, hit.snippet)
             if relevance < 0.15:
@@ -806,7 +893,7 @@ class DeepThinker:
             state.searched_results.append(SearchResultRecord(
                 section_id=sp.problem_id,
                 raw_query=query,
-                executed_query=query,
+                executed_query=executed_query,
                 title=hit.title,
                 url=hit.url,
                 snippet=hit.snippet,
@@ -827,7 +914,7 @@ class DeepThinker:
                 break
 
         self.tracker.log("search", sp.problem_id, "On-demand search completed",
-                         data={"query": query, "hits": len(hits), "accepted": accepted})
+                         data={"query": query, "executed_query": executed_query, "hits": len(all_hits), "accepted": accepted})
 
     def _register_source(self, state: DepthState, query: str, title: str, url: str, snippet: str) -> SourceRecord:
         with self._state_lock:

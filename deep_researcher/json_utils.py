@@ -19,6 +19,8 @@ def _strip_code_fence(text: str) -> str:
 
 
 def _repair_jsonish_text(text: str) -> str:
+    # First pass: fix unescaped double quotes inside JSON string values
+    # (line-level repair for simple "key": "value" patterns)
     repaired_lines = []
     for line in text.splitlines():
         match = re.match(r'(\s*"[^"]+"\s*:\s*")(.*?)("\s*,?\s*)$', line)
@@ -28,7 +30,28 @@ def _repair_jsonish_text(text: str) -> str:
         prefix, content, suffix = match.groups()
         content = re.sub(r'(?<!\\)"', r'\\"', content)
         repaired_lines.append(prefix + content + suffix)
-    return "\n".join(repaired_lines)
+    result = "\n".join(repaired_lines)
+    # Second pass: fix unescaped double quotes inside JSON array string elements.
+    # Only match lines that look like bare strings in arrays (indented, start with quote,
+    # but do NOT contain a colon-pattern like "key": which indicates a key-value pair).
+    repaired_lines2 = []
+    for line in result.splitlines():
+        # Skip key-value lines (already handled in first pass)
+        if re.match(r'\s*"[^"]+"\s*:', line):
+            repaired_lines2.append(line)
+            continue
+        match = re.match(r'^(\s*")(.*?)("\s*,?\s*)$', line)
+        if not match:
+            repaired_lines2.append(line)
+            continue
+        prefix, content, suffix = match.groups()
+        # Only repair if the content has unescaped internal quotes
+        if re.search(r'(?<!\\)"', content):
+            content = re.sub(r'(?<!\\)"', r'\\"', content)
+            repaired_lines2.append(prefix + content + suffix)
+        else:
+            repaired_lines2.append(line)
+    return "\n".join(repaired_lines2)
 
 
 def _decode_first_json(text: str) -> Any:
