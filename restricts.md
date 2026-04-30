@@ -8,7 +8,7 @@ Under http://localhost:6655, it provide multiple LLMs
 Anthropic-Compatible - For tools supporting Anthropic API
 OpenAI-Compatible - For tools supporting OpenAI API
 Google Gemini - For tools supporting Gemini API
-LiteLLM - Unified interface using OpenAI-compatible
+LiteLLM - Unified interface (OpenAI-compatible)
 
 
 ---
@@ -79,7 +79,7 @@ http://localhost:6655/litellm/v1
 
 ## 网络问题
 
-使用proxy来绕过网络限制，优先使用``代理。完整的命令如下：
+使用proxy来绕过网络限制。完整的命令如下：
 
 ```bash
 proxy_on() {
@@ -92,12 +92,8 @@ proxy_on() {
       echo "✓ Using personal proxy: $proxy_url"
       ;;
     *)
-      proxy_url=""
+      proxy_url="${1:-http://localhost:7899}"
       echo "✓ Using proxy: $proxy_url"
-      ;;
-    *)
-      proxy_url="$1"
-      echo "✓ Using custom proxy: $proxy_url"
       ;;
   esac
 

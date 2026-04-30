@@ -10,8 +10,8 @@
 
 - 运行环境、网关、代理、限流约束以 [restricts.md](restricts.md) 为准。
 - 项目用法和对外说明以 [README.md](README.md) 为准。
-- 稳定的工程文档放在 [docs/](docs)。
-- feature 级计划、方案比较、阶段性设计记录放在 [plan/](plan)。
+- 稳定的工程文档放在 [docs/](docs/)。
+- feature 级计划、方案比较、阶段性设计记录放在 [plan/](plan/)。
 
 ## Working Rules
 
